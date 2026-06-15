@@ -1,6 +1,6 @@
 # Groundwork
 
-Pollination boosts honey production and plant growth, rain speeds plants, hoe/cultivator ranges scale with grid views, pickaxes dig scaling, scythes harvest all crops, and Farming skill scales mass/grid planting, plant growth, and beehive capacity.
+Pollination boosts honey production and plant growth, rain speeds plants, hoe/cultivator ranges scale with grid views, pickaxes dig scaling, scythes harvest all crops, and Farming skill scales mass planting, plant growth, and beehive capacity.
 
 ![](https://i.ibb.co/whdVzJdg/Screenshot-2026-06-16-020402.png) <br>
 Configurable terrain tool scaling with radius and cost. Larger terrain ranges can require proportionally more materials, stamina, and durability, making expanded tools powerful but balanced.
@@ -22,12 +22,13 @@ Beehive upgrades and hover details. Farming-scaled honey capacity, cover, pollin
 Rain and pollination plant growth info. Hover text shows active Farming, pollination, and rain multipliers, remaining growth time, and total growth speed.
 
 ![](https://i.ibb.co/ycJdxWfq/Screenshot-2026-06-16-020330.png) <br>
-Farming-scaled mass/grid planting and foraging pollination. Plant in clean grids, scale planting count by Farming level, and let beehives boost nearby foraging respawn when conditions are right.
+Farming-scaled mass planting, grid planting, and foraging pollination. Plant in clean grids, scale planting count by Farming level, and let beehives boost nearby foraging respawn when conditions are right.
 
 ## Features
 
 ### Farming and Planting
 
+- Grid planting is always available while placing crops.
 - Mass planting scales with Farming level:
   - 0-19: Off
   - 20-39: 5 plants
@@ -36,7 +37,7 @@ Farming-scaled mass/grid planting and foraging pollination. Plant in clean grids
   - 80-99: 20 plants
   - 100: 25 plants
 - Hold the tool wheel modifier hotkey and use the mouse wheel to change mass-plant count.
-- Toggle grid planting while placing crops.
+- Turn off `Mass Planting Enabled` to disable only multi-plant placement; grid planting stays available.
 - Planted crops can grow faster based on the planter's Farming skill.
 - Mass planting can grant extra Farming skill.
 
@@ -77,119 +78,6 @@ Groundwork adds compact hover information to:
 - Beehives: honey capacity in the title, cover, pollination, night/rain rates, next honey with total rate.
 - Plants: remaining growth time, rain growth, pollination growth.
 - Foraging pickables: remaining respawn time, rain respawn, pollination respawn.
-
-## Config
-
-Main config:
-
-```text
-BepInEx/config/sighsorry.Groundwork.cfg
-```
-
-Terrain tool config:
-
-```text
-BepInEx/config/Groundwork.yml
-```
-
-Synced entries are controlled by the server in multiplayer. Local entries only affect the client.
-
-### 1 - General
-
-- `Lock Configuration` = `On` [Synced]  
-  Locks synced config to server admins.
-
-### 2 - Terrain Tools
-
-- `Terrain Tool Range Step` = `0.5` [Local]  
-  Range adjustment step. Hoe/Cultivator use meters; Pickaxe `terrainDig` uses scale units.
-- `Terrain Tool Default Preview Mode` = `Vanilla` [Local]
-- `Terrain Tool Preview Toggle Hotkey` = `G` [Local]
-- `Tool HUD` = `On` [Local]  
-  Shows terrain range and pickaxe dig scale HUD.
-- `Paved Road Smooth Height` = `On` [Local]
-- `Tool Wheel Modifier Hotkey` = `LeftAlt` [Local]  
-  Hold while using the mouse wheel for Groundwork tool controls.
-
-Terrain tool range costs only increase above the vanilla/base range:
-
-```text
-rangeRatio = selectedRange / baseRange
-areaRatio = rangeRatio^2
-multiplier = 1 + max(0, areaRatio - 1) * factor
-```
-
-Pickaxe terrain digging uses radius and depth:
-
-```text
-radiusScale = min(selectedScale, radiusMax)
-depthScale = min(selectedScale, depthMax)
-rawMultiplier = radiusScale * radiusScale * depthScale
-costMultiplier = 1 + (rawMultiplier - 1) * factor
-```
-
-Pickaxe `terrainDig` enable state, scale, and cost factors are configured in `Groundwork.yml`.
-
-### 3 - Mass Planting
-
-- `Mass Planting Enabled` = `On` [Synced]
-- `Toggle Grid Planting Hotkey` = `G` [Local]
-- `Mass Plant Spacing Factor` = `1.0` [Synced]
-- `Mass Plant Skill Gain Factor` = `0.5` [Synced]
-
-Spacing uses the selected plant prefab's `growRadius * 2`, then applies `Mass Plant Spacing Factor`.
-
-### 4 - Plants and Foraging
-
-- `Plant Grow Speed Factor` = `2.5` [Synced]  
-  Grow speed at Farming 100 for placed plants. `0` disables.
-- `Foraging Pickup Max Range` = `5` [Synced]  
-  Pickup range at Farming 100. `0` disables.
-- `Foraging Respawn Speed Factor` = `5` [Synced]  
-  Respawn speed at Farming 100. `0` disables.
-- `Rain Plant Grow Speed Factor` = `2` [Synced]  
-  Plant grow speed while wet. `1` disables.
-- `Rain Foraging Respawn Speed Factor` = `2` [Synced]  
-  Foraging respawn speed while wet. `1` disables.
-
-### 5 - Beehives
-
-- `Beehive Capacity Farming Levels Per Bonus Honey` = `20` [Synced]  
-  Farming levels needed for each `+1` honey capacity. `0` disables.
-- `Beehive Farming Skill Gain Per Honey` = `0.25` [Synced]
-- `Beehive Cover Max Speed Multiplier` = `2` [Synced]
-- `Beehive Night Honey Rate` = `0.5` [Synced]  
-  Honey production rate at night. `1` is the vanilla value, `0.5` is half speed, and `0` pauses night production. Unloaded catch-up uses an average day/night rate.
-- `Beehive Rain Honey Rate` = `0.5` [Synced]  
-  Honey production rate while wet. `1` is the vanilla value, `0.5` is half speed, and `0` pauses rain production. Rain is not accumulated during unloaded catch-up.
-
-### 6 - Pollination
-
-- `Beehive Pollination Radius` = `3` [Synced]
-- `Beehive Pollination Max Plants` = `24` [Synced]
-- `Beehive Pollination Plant Grow Speed Factor` = `2` [Synced]
-- `Beehive Pollination Foraging Respawn Speed Factor` = `4` [Synced]
-- `Beehive Pollination Honey Speed Bonus Percent Per Target` = `10` [Synced]
-
-Honey pollination rate:
-
-```text
-1 + targetCount * percentPerTarget / 100
-```
-
-With defaults, `24` targets at `10%` gives:
-
-```text
-1 + 24 * 10 / 100 = x3.4
-```
-
-When an area catches up after being unloaded, cover and pollination bonuses use half effectiveness:
-
-```text
-unloaded = 1 + (currentMultiplier - 1) * 0.5
-```
-
-Eligibility is checked first, so full hives, finished plants, blocked hives, wrong biomes, and rainy loaded areas do not get invalid pollination bonuses.
 
 ## Groundwork.yml
 
@@ -256,4 +144,5 @@ On multiplayer, the server's `Groundwork.yml` is synced to clients.
 - Rain disables beehive pollination while the area is loaded.
 - Dedicated servers may not have precise per-position weather history.
 - Groundwork does not write transient pollination multipliers to ZDOs.
+- ZenBeehive beehive containers are supported: honey removed from the container counts as beehive harvest for Farming skill gain and capacity ownership.
 - `Groundwork.yml` is created automatically if missing.

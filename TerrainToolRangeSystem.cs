@@ -73,9 +73,7 @@ internal static class TerrainToolRangeSystem
     private static GameObject? RangeLabelObject;
     private static TextMeshProUGUI? RangeLabelText;
 
-    internal static bool Enabled =>
-        GroundworkToolsDomain.TerrainToolRangeAndCostEnabled;
-
+    // ObjectDB rule setup and restoration.
     internal static void RestoreObjectDb(ObjectDB objectDb)
     {
         if (objectDb == null)
@@ -98,7 +96,7 @@ internal static class TerrainToolRangeSystem
         ObjectDbState state = ObjectDbStates.GetValue(objectDb, _ => new ObjectDbState());
         ClearRuntimeState();
 
-        if (!Enabled || configs.Count == 0)
+        if (configs.Count == 0)
         {
             return;
         }
@@ -128,7 +126,7 @@ internal static class TerrainToolRangeSystem
 
     internal static void ApplyToPlayerBuildPieces(Player player)
     {
-        if (!Enabled || player == null || ObjectDB.instance == null)
+        if (player == null || ObjectDB.instance == null)
         {
             return;
         }
@@ -145,6 +143,7 @@ internal static class TerrainToolRangeSystem
         ApplyToPieceTable(ObjectDB.instance, state, toolPrefabName, player.m_buildPieces);
     }
 
+    // Player input, range selection, and placement lifecycle.
     internal static void UpdateInput(Player player)
     {
         if (player == null || player != Player.m_localPlayer)
@@ -152,7 +151,7 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
-        if (!Enabled || !player.InPlaceMode() || !TryGetSelectedRule(player, out TerrainToolRule rule))
+        if (!player.InPlaceMode() || !TryGetSelectedRule(player, out TerrainToolRule rule))
         {
             ClearActiveRangeRule();
             ClearRangePreview();
@@ -199,7 +198,7 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
-        if (!Enabled || player.m_placementGhost == null || !TryGetSelectedRule(player, out TerrainToolRule rule) || !rule.RangeEnabled)
+        if (player.m_placementGhost == null || !TryGetSelectedRule(player, out TerrainToolRule rule) || !rule.RangeEnabled)
         {
             ClearActiveRangeRule();
             ClearRangePreview();
@@ -228,7 +227,7 @@ internal static class TerrainToolRangeSystem
 
     internal static PieceInfoState? PreparePieceInfo(Piece piece)
     {
-        if (!Enabled || piece == null || !RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
+        if (piece == null || !RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
         {
             return null;
         }
@@ -281,8 +280,7 @@ internal static class TerrainToolRangeSystem
 
     internal static bool ShouldSuppressCameraZoomInput()
     {
-        if (!Enabled ||
-            Player.m_localPlayer == null ||
+        if (Player.m_localPlayer == null ||
             !IsRangeModifierHeld() ||
             !TryGetSelectedRule(Player.m_localPlayer, out TerrainToolRule rule) ||
             !rule.RangeEnabled)
@@ -295,7 +293,7 @@ internal static class TerrainToolRangeSystem
 
     internal static void BeginTryPlacePiece(Player player, Piece piece)
     {
-        if (!Enabled || player == null || piece == null || !RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
+        if (player == null || piece == null || !RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
         {
             return;
         }
@@ -347,7 +345,6 @@ internal static class TerrainToolRangeSystem
     internal static void CheckDynamicStamina(Character character, ref bool result)
     {
         if (!result ||
-            !Enabled ||
             character is not Player player ||
             player != Player.m_localPlayer ||
             !IsPlacementButtonDown() ||
@@ -367,7 +364,6 @@ internal static class TerrainToolRangeSystem
     internal static void CheckDynamicRequirements(Player player, Piece piece, Player.RequirementMode mode, ref bool result)
     {
         if (!result ||
-            !Enabled ||
             mode != Player.RequirementMode.CanBuild ||
             player == null ||
             piece == null ||
@@ -393,8 +389,7 @@ internal static class TerrainToolRangeSystem
 
     internal static void ApplyDynamicBuildStamina(Player player, ref float stamina)
     {
-        if (!Enabled ||
-            player == null ||
+        if (player == null ||
             !PendingPlacementCosts.TryGetValue(player, out PendingPlacementCost pendingCost) ||
             !pendingCost.IsCurrentFrame)
         {
@@ -406,8 +401,7 @@ internal static class TerrainToolRangeSystem
 
     internal static void ApplyDynamicPlaceDurability(Player player, ItemDrop.ItemData tool, ref float durability)
     {
-        if (!Enabled ||
-            player == null ||
+        if (player == null ||
             tool == null ||
             !PendingPlacementCosts.TryGetValue(player, out PendingPlacementCost pendingCost) ||
             !pendingCost.IsCurrentFrame)
@@ -921,6 +915,7 @@ internal static class TerrainToolRangeSystem
         }
     }
 
+    // Custom terrain range and grid preview rendering.
     private static void ApplyCustomRangePreview(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, float range)
     {
         if (ghost == null)
@@ -1710,6 +1705,7 @@ internal static class TerrainToolRangeSystem
         }
     }
 
+    // HUD labels and formatting.
     private static void UpdateRangeLabel(TerrainToolRule rule, GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, float range)
     {
         if (!GroundworkToolsDomain.ToolHudEnabled)
@@ -1830,6 +1826,7 @@ internal static class TerrainToolRangeSystem
         return ZInput.GetButtonDown("Attack") || ZInput.GetButtonDown("JoyPlace");
     }
 
+    // Cost and durability scaling.
     private static float GetScaledPlaceDurability(Player player, ItemDrop.ItemData tool, TerrainToolRule rule, float range)
     {
         if (tool?.m_shared == null)
@@ -2204,6 +2201,7 @@ internal static class TerrainToolRangeSystem
     }
 }
 
+// Harmony patches.
 [HarmonyPatch(typeof(Player), nameof(Player.SetPlaceMode))]
 internal static class PlayerSetPlaceModeTerrainToolRangePatch
 {

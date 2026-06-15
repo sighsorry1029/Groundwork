@@ -466,6 +466,7 @@
     <Compile Include="Groundwork\AssemblyInfo.cs" />
     <Compile Include="FarmingSkillSystem.cs" />
     <Compile Include="BeehivePollinationSystem.cs" />
+    <Compile Include="ZenBeehiveCompatSystem.cs" />
     <Compile Include="EnvironmentEffectSystem.cs" />
     <Compile Include="ScytheHarvestSystem.cs" />
     <Compile Include="ScytheToolCompatSystem.cs" />
@@ -484,7 +485,7 @@
     <Content Include="Libs\ServerSync.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
-    <Content Include="LICENSE.txt" />
+    <Content Include="LICENSE" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\Defaults\Groundwork.yml">

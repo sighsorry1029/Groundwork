@@ -1,5 +1,5 @@
 groundwork_beehive_header: "{0} ({1} {2}/{3})"
-groundwork_beehive_header_farming: "{0} ({1} {2}/{3}, Farming {4})"
+groundwork_beehive_header_farming: "{0} ({1} {2}/{3}, Farming +{4})"
 groundwork_beehive_cover: "Cover: {0} ({1})"
 groundwork_beehive_pollination: "Pollination: {0}/{1} ({2})"
 groundwork_beehive_night_rate: "Night: {0}"

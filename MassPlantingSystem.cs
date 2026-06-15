@@ -187,10 +187,10 @@ internal static class MassPlantingSystem
         }
     }
 
+    // Placement interception and preview.
     internal static bool TryInterceptPlace(Player player, Piece piece, ref bool result)
     {
         if (_placingBatch ||
-            !IsFeatureEnabled() ||
             !TryGetPlant(piece, out Plant? plantCandidate) ||
             UpdatePlacementGhostMethod == null ||
             PlacementGhostField == null)
@@ -301,7 +301,6 @@ internal static class MassPlantingSystem
     {
         if (_placingBatch ||
             !_gridPlantingMode ||
-            !IsFeatureEnabled() ||
             PlacementGhostField == null ||
             player.GetPlacementStatus() != Player.PlacementStatus.Valid ||
             !TryGetSelectedPlant(player, out _, out Plant? plantCandidate))
@@ -323,7 +322,6 @@ internal static class MassPlantingSystem
     internal static void UpdatePlacementPreview(Player player)
     {
         if (_placingBatch ||
-            !IsFeatureEnabled() ||
             PlacementGhostField == null ||
             !TryGetSelectedPlant(player, out Piece? pieceCandidate, out Plant? plantCandidate))
         {
@@ -418,9 +416,10 @@ internal static class MassPlantingSystem
         SetOriginalGhostInvalid(ghost, invalid);
     }
 
+    // Input capture and build hint UI.
     internal static void UpdateInput(Player player)
     {
-        if (player != Player.m_localPlayer || !IsFeatureEnabled())
+        if (player != Player.m_localPlayer)
         {
             ClearActivePlantSelection();
             return;
@@ -463,7 +462,6 @@ internal static class MassPlantingSystem
     {
         Player? player = Player.m_localPlayer;
         if (player == null ||
-            !IsFeatureEnabled() ||
             !player.InPlaceMode() ||
             !TryGetSelectedPlant(player, out Piece? piece, out _) ||
             piece == null)
@@ -471,14 +469,14 @@ internal static class MassPlantingSystem
             return false;
         }
 
-        return IsMassPlantWheelModifierHeld() || GetCurrentPlantCount(player, piece) > 1;
+        return IsMassPlantingEnabled() && IsMassPlantWheelModifierHeld() ||
+               GetCurrentPlantCount(player, piece) > 1;
     }
 
     internal static void BeginPlayerUpdateInput(Player player)
     {
         ClearPlayerUpdateInput();
         if (player != Player.m_localPlayer ||
-            !IsFeatureEnabled() ||
             !player.InPlaceMode() ||
             Hud.IsPieceSelectionVisible() ||
             Hud.InRadial() ||
@@ -492,7 +490,7 @@ internal static class MassPlantingSystem
             return;
         }
 
-        bool modifierHeld = IsMassPlantWheelModifierHeld();
+        bool modifierHeld = IsMassPlantingEnabled() && IsMassPlantWheelModifierHeld();
         bool rotatesGroup = !modifierHeld && GetCurrentPlantCount(player, piece) > 1;
         if (!modifierHeld && !rotatesGroup)
         {
@@ -523,14 +521,20 @@ internal static class MassPlantingSystem
 
     internal static PieceInfoState? PreparePieceInfo(Piece piece)
     {
-        if (!IsFeatureEnabled() || piece == null || !TryGetPlant(piece, out _))
+        if (piece == null || !TryGetPlant(piece, out _))
         {
             return null;
         }
 
         PieceInfoState state = new(piece);
-        string hint = $"{FormatMassPlantWheelShortcut()}: {GroundworkLocalization.Text("groundwork_mass_plant", "Mass Plant")}\n" +
-                      $"{FormatShortcut(GroundworkToolsDomain.ToggleGridPlantingHotkey)}: {GroundworkLocalization.Text("groundwork_grid_plant", "Grid Plant")}";
+        List<string> hints = [];
+        if (IsMassPlantingEnabled())
+        {
+            hints.Add($"{FormatMassPlantWheelShortcut()}: {GroundworkLocalization.Text("groundwork_mass_plant", "Mass Plant")}");
+        }
+
+        hints.Add($"{FormatShortcut(GroundworkToolsDomain.ToggleGridPlantingHotkey)}: {GroundworkLocalization.Text("groundwork_grid_plant", "Grid Plant")}");
+        string hint = string.Join("\n", hints);
         piece.m_description = string.IsNullOrWhiteSpace(piece.m_description)
             ? hint
             : $"{piece.m_description}\n{hint}";
@@ -577,7 +581,6 @@ internal static class MassPlantingSystem
 
         Player? player = Player.m_localPlayer;
         bool show = player != null &&
-                    IsFeatureEnabled() &&
                     player.InPlaceMode() &&
                     !Hud.IsPieceSelectionVisible() &&
                     !Hud.InRadial() &&
@@ -604,6 +607,7 @@ internal static class MassPlantingSystem
         }
 
         int count = GetCurrentPlantCount(player);
+        bool massPlantingEnabled = IsMassPlantingEnabled();
         string massState = FormatMassPlantState(count);
         string gridState = _gridPlantingMode
             ? GroundworkLocalization.Text("groundwork_state_on", "On")
@@ -615,11 +619,19 @@ internal static class MassPlantingSystem
         string gridKey = FormatShortcut(GroundworkToolsDomain.ToggleGridPlantingHotkey);
         string[] massKeys = FormatMassPlantWheelKeys();
 
-        ArrangeBuildHintSlots();
+        ArrangeBuildHintSlots(massPlantingEnabled);
         HideBuildHintSlot(_cycleHintSlot);
-        _massHintSlot?.Set($"{massPlantText}<br>{massState}", massKeys, preferredTextWidth: 120f);
+        if (massPlantingEnabled)
+        {
+            _massHintSlot?.Set($"{massPlantText}<br>{massState}", massKeys, preferredTextWidth: 120f);
+        }
+        else
+        {
+            HideBuildHintSlot(_massHintSlot);
+        }
+
         _gridHintSlot?.Set($"{gridPlantText}<br>{gridState}", new[] { gridKey }, preferredTextWidth: 100f);
-        _massHintSlot?.RebuildParentLayout();
+        (_gridHintSlot ?? _massHintSlot)?.RebuildParentLayout();
 
         TextMeshProUGUI? gridHint = ResolveGridHint(hints);
         TextMeshProUGUI? copyHint = ResolveCopyHint(hints);
@@ -630,9 +642,9 @@ internal static class MassPlantingSystem
         }
 
         bool needsFallback = (_gridHintSlot == null && gridHint == null) ||
-                             (_massHintSlot == null && copyHint == null);
+                             (massPlantingEnabled && _massHintSlot == null && copyHint == null);
 
-        if (_massHintSlot == null && copyHint != null)
+        if (massPlantingEnabled && _massHintSlot == null && copyHint != null)
         {
             SetHintText(
                 copyHint,
@@ -644,9 +656,14 @@ internal static class MassPlantingSystem
             EnsureFallbackBuildHint(hints);
             if (_fallbackBuildHint != null)
             {
-                _fallbackBuildHint.SetText(
-                    $"{GroundworkLocalization.Text("groundwork_mass", "Mass")} <mspace=0.6em>{FormatMassPlantWheelShortcut()}</mspace> {massState}  " +
-                    $"{GroundworkLocalization.Text("groundwork_grid", "Grid")} <mspace=0.6em>{gridKey}</mspace> {gridState}");
+                List<string> fallbackParts = [];
+                if (massPlantingEnabled)
+                {
+                    fallbackParts.Add($"{GroundworkLocalization.Text("groundwork_mass", "Mass")} <mspace=0.6em>{FormatMassPlantWheelShortcut()}</mspace> {massState}");
+                }
+
+                fallbackParts.Add($"{GroundworkLocalization.Text("groundwork_grid", "Grid")} <mspace=0.6em>{gridKey}</mspace> {gridState}");
+                _fallbackBuildHint.SetText(string.Join("  ", fallbackParts));
                 _fallbackBuildHint.RebuildParentLayout();
             }
         }
@@ -664,21 +681,26 @@ internal static class MassPlantingSystem
         _massHintSlot ??= KeyHintCell.CloneFrom(_gridHintSlot ?? _cycleHintSlot, "Groundwork_MassPlantHint", hideOnRestore: true);
     }
 
-    private static void ArrangeBuildHintSlots()
+    private static void ArrangeBuildHintSlots(bool massPlantingEnabled)
     {
-        if (_massHintSlot == null)
+        if (massPlantingEnabled && _massHintSlot != null)
         {
+            _massHintSlot.MoveToStart();
+            if (_gridHintSlot != null)
+            {
+                _gridHintSlot.MoveAfter(_massHintSlot.Root);
+                return;
+            }
+
+            _cycleHintSlot?.MoveAfter(_massHintSlot.Root);
             return;
         }
 
-        _massHintSlot.MoveToStart();
         if (_gridHintSlot != null)
         {
-            _gridHintSlot.MoveAfter(_massHintSlot.Root);
+            _gridHintSlot.MoveToStart();
             return;
         }
-
-        _cycleHintSlot?.MoveAfter(_massHintSlot.Root);
     }
 
     private static void HideBuildHintSlot(KeyHintCell? slot)
@@ -699,7 +721,7 @@ internal static class MassPlantingSystem
         _massHintSlot?.Restore();
     }
 
-    private static bool IsFeatureEnabled()
+    private static bool IsMassPlantingEnabled()
     {
         return GroundworkToolsDomain.MassPlantingEnabled;
     }
@@ -829,7 +851,7 @@ internal static class MassPlantingSystem
 
     private static bool TryHandleMassPlantWheel(Player player)
     {
-        if (!IsMassPlantWheelModifierHeld())
+        if (!IsMassPlantingEnabled() || !IsMassPlantWheelModifierHeld())
         {
             return false;
         }
@@ -1187,6 +1209,7 @@ internal static class MassPlantingSystem
         }
     }
 
+    // Placement limits, resource payment, and skill rewards.
     private static int ResolveAffordableCount(Player player, Piece piece, int wantedCount)
     {
         if (player.NoCostCheat() || ZoneSystem.instance.GetGlobalKey(piece.FreeBuildKey()))
@@ -1922,6 +1945,7 @@ internal static class MassPlantingSystem
     }
 }
 
+// Harmony patches.
 [HarmonyPatch(typeof(KeyHints), "Awake")]
 internal static class KeyHintsAwakeMassPlantingPatch
 {

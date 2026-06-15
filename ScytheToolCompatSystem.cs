@@ -14,11 +14,6 @@ internal static class ScytheToolCompatSystem
 
     internal static void ApplyToObjectDb(ObjectDB objectDb)
     {
-        if (!ShouldTreatScythesAsTools())
-        {
-            return;
-        }
-
         int changedCount = 0;
         foreach (GameObject itemPrefab in objectDb.m_items)
         {
@@ -47,8 +42,7 @@ internal static class ScytheToolCompatSystem
 
     internal static bool ShouldCountAsWeapon(ItemDrop.ItemData? item)
     {
-        return ShouldTreatScythesAsTools() &&
-               item?.m_shared != null &&
+        return item?.m_shared != null &&
                item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Tool &&
                IsScytheLike(item.m_shared);
     }
@@ -121,11 +115,6 @@ internal static class ScytheToolCompatSystem
             "InvokeEffectRecalc",
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
         recalcMethod?.Invoke(null, null);
-    }
-
-    private static bool ShouldTreatScythesAsTools()
-    {
-        return GroundworkToolsDomain.TreatScythesAsToolsEnabled;
     }
 
     private static bool IsScytheLike(ItemDrop.ItemData.SharedData? sharedData)

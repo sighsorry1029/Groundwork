@@ -9,8 +9,7 @@ internal static class PickableRespawnHoverSystem
 {
     internal static void AppendHoverText(Pickable pickable, ref string hoverText)
     {
-        if (pickable == null ||
-            !GroundworkToolsDomain.Enabled)
+        if (pickable == null)
         {
             return;
         }
@@ -37,7 +36,6 @@ internal static class PickableRespawnHoverSystem
     internal static void AppendPlantHoverText(Plant plant, ref string hoverText)
     {
         if (plant == null ||
-            !GroundworkToolsDomain.Enabled ||
             plant.GetStatus() != Plant.Status.Healthy)
         {
             return;

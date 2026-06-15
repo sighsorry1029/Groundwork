@@ -21,7 +21,6 @@ internal static class ScytheHarvestSystem
                    m_weapon.m_shared: not null
                } &&
                (Object)(object)attack.m_character == (Object)(object)Player.m_localPlayer &&
-               GroundworkToolsDomain.ScytheHarvestImprovementsEnabled &&
                attack.m_weapon.m_shared.m_skillType == Skills.SkillType.Farming &&
                attack.m_harvestRadiusMaxLevel > 0f;
     }

@@ -97,6 +97,7 @@ internal static class BeehivePollinationSystem
         }
     }
 
+    // Beehive hover text and harvest bookkeeping.
     internal static void AppendHoverText(Beehive beehive, ref string hoverText)
     {
         if (beehive == null ||
@@ -108,8 +109,8 @@ internal static class BeehivePollinationSystem
 
         int honeyLevel = GetHoneyLevel(beehive);
         int maxHoney = GetEffectiveMaxHoney(beehive);
-        float farmingLevel = GetTendedFarmingLevel(beehive);
-        ReplaceHoverHeader(beehive, ref hoverText, honeyLevel, maxHoney, farmingLevel);
+        int farmingCapacityBonus = GetFarmingCapacityBonusHoney(beehive);
+        ReplaceHoverHeader(beehive, ref hoverText, honeyLevel, maxHoney, farmingCapacityBonus);
 
         if (TryGetCoverPercentage(beehive, out float coverPercentage))
         {
@@ -161,25 +162,54 @@ internal static class BeehivePollinationSystem
 
     internal static void StoreTendedFarmingLevel(Beehive beehive, long sender)
     {
+        StoreTendedFarmingLevel(beehive, ResolveSenderFarmingLevel(sender));
+    }
+
+    internal static void RaiseFarmingSkillForHarvest(long sender, int harvestedHoney)
+    {
+        Player? player = ResolveSenderPlayer(sender);
+        if (player != null)
+        {
+            RaiseFarmingSkillForHarvest(player, harvestedHoney);
+        }
+    }
+
+    internal static void RegisterBeehiveHarvest(Beehive beehive, Player player, int harvestedHoney)
+    {
+        if (beehive == null || player == null || harvestedHoney <= 0)
+        {
+            return;
+        }
+
+        StoreTendedFarmingLevel(beehive, player);
+        RaiseFarmingSkillForHarvest(player, harvestedHoney);
+    }
+
+    private static void StoreTendedFarmingLevel(Beehive beehive, Player player)
+    {
+        StoreTendedFarmingLevel(beehive, Mathf.Clamp(player.GetSkillLevel(Skills.SkillType.Farming), 0f, 100f));
+    }
+
+    private static void StoreTendedFarmingLevel(Beehive beehive, float farmingLevel)
+    {
         ZDO? zdo = GetZdo(beehive);
         if (zdo == null || !beehive.m_nview.IsOwner())
         {
             return;
         }
 
-        zdo.Set(TendedFarmingLevelKey, ResolveSenderFarmingLevel(sender));
+        zdo.Set(TendedFarmingLevelKey, Mathf.Clamp(farmingLevel, 0f, 100f));
     }
 
-    internal static void RaiseFarmingSkillForHarvest(long sender, int harvestedHoney)
+    private static void RaiseFarmingSkillForHarvest(Player player, int harvestedHoney)
     {
         float skillGainPerHoney = GroundworkToolsDomain.BeehiveFarmingSkillGainPerHoney;
-        if (harvestedHoney <= 0 || skillGainPerHoney <= 0f)
+        if (player == null || harvestedHoney <= 0 || skillGainPerHoney <= 0f)
         {
             return;
         }
 
-        Player? player = ResolveSenderPlayer(sender);
-        player?.RaiseSkill(Skills.SkillType.Farming, harvestedHoney * skillGainPerHoney);
+        player.RaiseSkill(Skills.SkillType.Farming, harvestedHoney * skillGainPerHoney);
     }
 
     internal static void BeginPlacePiece(Player player, Piece piece)
@@ -216,12 +246,7 @@ internal static class BeehivePollinationSystem
     internal static int GetEffectiveMaxHoney(Beehive beehive, bool preserveStoredHoney = true)
     {
         int baseMax = Mathf.Max(1, beehive.m_maxHoney);
-        int levelsPerBonusHoney = GroundworkToolsDomain.BeehiveCapacityFarmingLevelsPerBonusHoney;
-        int effectiveMax = baseMax;
-        if (levelsPerBonusHoney > 0)
-        {
-            effectiveMax += Mathf.FloorToInt(GetTendedFarmingLevel(beehive) / levelsPerBonusHoney);
-        }
+        int effectiveMax = baseMax + GetFarmingCapacityBonusHoney(beehive);
 
         if (preserveStoredHoney)
         {
@@ -360,6 +385,7 @@ internal static class BeehivePollinationSystem
         return FormatSeconds(remainingSeconds);
     }
 
+    // Pollination assignment and cache refresh.
     private static PollinationSummary GetPollinationSummary(Beehive beehive)
     {
         int maxCount = GroundworkToolsDomain.BeehivePollinationMaxPlants;
@@ -492,6 +518,7 @@ internal static class BeehivePollinationSystem
         }
     }
 
+    // Plant and foraging growth multipliers.
     private static float GetPlantGrowthMultiplierForTarget(Plant plant)
     {
         if (!GroundworkToolsDomain.BeehivePollinationFeatureEnabled ||
@@ -741,6 +768,7 @@ internal static class BeehivePollinationSystem
         StaleLoadedSinceTargets.Clear();
     }
 
+    // Unloaded catch-up helpers.
     private static float ApplyUnloadedCatchupEffectiveness(float multiplier)
     {
         return 1f + (Mathf.Max(1f, multiplier) - 1f) * UnloadedCatchupEffectiveness;
@@ -926,7 +954,7 @@ internal static class BeehivePollinationSystem
         AppendLine(ref hoverText, Colorize(string.Join("  ", parts)));
     }
 
-    private static void ReplaceHoverHeader(Beehive beehive, ref string hoverText, int honeyLevel, int maxHoney, float farmingLevel)
+    private static void ReplaceHoverHeader(Beehive beehive, ref string hoverText, int honeyLevel, int maxHoney, int farmingCapacityBonus)
     {
         if (string.IsNullOrEmpty(hoverText))
         {
@@ -937,15 +965,15 @@ internal static class BeehivePollinationSystem
         string honeyName = LocalizeVanillaText(
             beehive.m_honeyItem?.m_itemData.m_shared.m_name,
             "Honey");
-        string header = farmingLevel > 0.01f
+        string header = farmingCapacityBonus > 0
             ? GroundworkLocalization.Format(
                 "groundwork_beehive_header_farming",
-                "{0} ({1} {2}/{3}, Farming {4})",
+                "{0} ({1} {2}/{3}, Farming +{4})",
                 beehiveName,
                 honeyName,
                 honeyLevel,
                 maxHoney,
-                Mathf.FloorToInt(farmingLevel))
+                farmingCapacityBonus)
             : GroundworkLocalization.Format(
                 "groundwork_beehive_header",
                 "{0} ({1} {2}/{3})",
@@ -1018,6 +1046,17 @@ internal static class BeehivePollinationSystem
     private static float GetTendedFarmingLevel(Beehive beehive)
     {
         return Mathf.Clamp(GetZdo(beehive)?.GetFloat(TendedFarmingLevelKey, 0f) ?? 0f, 0f, 100f);
+    }
+
+    private static int GetFarmingCapacityBonusHoney(Beehive beehive)
+    {
+        int levelsPerBonusHoney = GroundworkToolsDomain.BeehiveCapacityFarmingLevelsPerBonusHoney;
+        if (levelsPerBonusHoney <= 0)
+        {
+            return 0;
+        }
+
+        return Mathf.Max(0, Mathf.FloorToInt(GetTendedFarmingLevel(beehive) / levelsPerBonusHoney));
     }
 
     private static float ResolveSenderFarmingLevel(long sender)
@@ -1102,12 +1141,14 @@ internal static class BeehivePollinationSystem
         return value.ToString("0.#", CultureInfo.InvariantCulture) + "x";
     }
 
+    // Formatting and vanilla hover header replacement.
     private static string FormatSeconds(float seconds)
     {
         return GroundworkLocalization.FormatDuration(seconds);
     }
 }
 
+// Harmony patches.
 [HarmonyPatch(typeof(Beehive), nameof(Beehive.GetHoverText))]
 internal static class BeehiveGetHoverTextPollinationPatch
 {
@@ -1208,15 +1249,5 @@ internal static class PickableAwakePollinationPatch
     private static void Postfix(Pickable __instance)
     {
         BeehivePollinationSystem.TrackLoadedTarget(__instance);
-    }
-}
-
-[HarmonyPatch(typeof(Plant), "GetGrowTime")]
-internal static class PlantGetGrowTimeBeehivePollinationPatch
-{
-    [HarmonyPriority(Priority.Last)]
-    private static void Postfix(Plant __instance, ref float __result)
-    {
-        BeehivePollinationSystem.TryModifyPlantGrowTime(__instance, ref __result);
     }
 }

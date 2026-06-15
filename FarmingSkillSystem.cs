@@ -38,11 +38,6 @@ internal static class FarmingSkillSystem
 
     internal static void ApplyForagingBonusEffectFallbacks(ZNetScene scene)
     {
-        if (!GroundworkToolsDomain.Enabled)
-        {
-            return;
-        }
-
         EffectList? fallback = ResolveForagingBonusEffectFallback(scene);
         if (fallback == null || !fallback.HasEffects())
         {
@@ -282,10 +277,21 @@ internal static class FarmingSkillSystem
 
     internal static void TryModifyGrowTime(Plant plant, ref float growTime)
     {
+        if (plant == null || growTime <= 0f)
+        {
+            return;
+        }
+
+        TryModifyPlanterGrowTime(plant, ref growTime);
+        BeehivePollinationSystem.TryModifyPlantGrowTime(plant, ref growTime);
+        EnvironmentEffectSystem.TryModifyPlantGrowTime(plant, ref growTime);
+    }
+
+    private static void TryModifyPlanterGrowTime(Plant plant, ref float growTime)
+    {
         float speedFactor = GroundworkToolsDomain.PlantGrowSpeedFactor;
         if (speedFactor <= 0 ||
-            growTime <= 0f ||
-            plant == null)
+            growTime <= 0f)
         {
             return;
         }
@@ -613,8 +619,9 @@ internal static class PlantAwakePlanterSkillPatch
 }
 
 [HarmonyPatch(typeof(Plant), "GetGrowTime")]
-internal static class PlantGetGrowTimePlanterSkillPatch
+internal static class PlantGetGrowTimeGroundworkPatch
 {
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(Plant __instance, ref float __result)
     {
         FarmingSkillSystem.TryModifyGrowTime(__instance, ref __result);

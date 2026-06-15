@@ -16,13 +16,15 @@ namespace Groundwork;
 
 [BepInPlugin(ModGUID, ModName, ModVersion)]
 [BepInDependency(JewelcraftingGuid, BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency(ZenBeehiveGuid, BepInDependency.DependencyFlags.SoftDependency)]
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.0.0";
+    internal const string ModVersion = "1.0.1";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
+    private const string ZenBeehiveGuid = "ZenDragon.ZenBeehive";
     private const string TerrainToolsYamlFileName = "Groundwork.yml";
     private const string SyncedTerrainToolsYamlIdentifier = "groundwork_yaml";
     private const long ReloadDelayTicks = TimeSpan.TicksPerSecond;
@@ -258,38 +260,47 @@ public class GroundworkPlugin : BaseUnityPlugin
     {
         internal GeneralSettings General { get; } = new();
 
+        internal TerrainToolSettings TerrainTools { get; } = new();
+
         internal FarmingSettings Farming { get; } = new();
 
         internal void Bind(GroundworkPlugin plugin)
         {
             General.Bind(plugin);
-            BindTerrainTools(plugin);
+            TerrainTools.Bind(plugin);
             Farming.Bind(plugin);
-        }
-
-        private void BindTerrainTools(GroundworkPlugin plugin)
-        {
-            const string terrainToolsGroup = "2 - Terrain Tools";
-            General.TerrainToolRangeStep = plugin.config(terrainToolsGroup, "Terrain Tool Range Step", 0.5f, new ConfigDescription("Range adjustment step for terrain tool pieces configured in Groundwork.yml. Hoe/Cultivator use meters, and Pickaxe terrainDig uses scale units.", new AcceptableValueRange<float>(0.05f, 5f)), synchronizedSetting: false);
-            Farming.DefaultPreviewMode = plugin.config(terrainToolsGroup, "Terrain Tool Default Preview Mode", TerrainToolRangePreviewMode.Vanilla, "Default Hoe/Cultivator terrain range preview mode. Vanilla scales the existing placement ghost visuals. Grid hides those visuals and draws the exact radius plus terrain grid candidate markers.", synchronizedSetting: false);
-            Farming.TerrainToolPreviewToggleHotkey = plugin.config(terrainToolsGroup, "Terrain Tool Preview Toggle Hotkey", new KeyboardShortcut(KeyCode.G), new ConfigDescription("Local hotkey for toggling Hoe/Cultivator terrain modifying pieces between Vanilla and Grid preview while placing.", new AcceptableShortcuts()), synchronizedSetting: false);
-            General.ToolHud = plugin.config(terrainToolsGroup, "Tool HUD", Toggle.On, "If on, Hoe/Cultivator terrain range HUD and Pickaxe terrain dig scale HUD are shown.", synchronizedSetting: false);
-            Farming.PavedRoadSmoothHeight = plugin.config(terrainToolsGroup, "Paved Road Smooth Height", Toggle.On, "If on, Paved Road applies its vanilla smooth height operation. Turn off to keep only the paved paint effect.", synchronizedSetting: false);
-            General.ToolWheelModifierHotkey = plugin.config(terrainToolsGroup, "Tool Wheel Modifier Hotkey", new KeyboardShortcut(KeyCode.LeftAlt), new ConfigDescription("Local hotkey held while using mouse wheel for Groundwork tool features, including mass planting count, Hoe/Cultivator terrain range, and pickaxe terrainDig scale.", new AcceptableShortcuts()), synchronizedSetting: false);
         }
     }
 
     internal sealed class GeneralSettings
     {
         internal ConfigEntry<Toggle> LockConfiguration = null!;
-        internal ConfigEntry<float> TerrainToolRangeStep = null!;
-        internal ConfigEntry<Toggle> ToolHud = null!;
-        internal ConfigEntry<KeyboardShortcut> ToolWheelModifierHotkey = null!;
 
         internal void Bind(GroundworkPlugin plugin)
         {
             const string group = "1 - General";
             LockConfiguration = plugin.config(group, "Lock Configuration", Toggle.On, "If on, the configuration is locked and can be changed by server admins only.");
+        }
+    }
+
+    internal sealed class TerrainToolSettings
+    {
+        internal ConfigEntry<float> TerrainToolRangeStep = null!;
+        internal ConfigEntry<TerrainToolRangePreviewMode> DefaultPreviewMode = null!;
+        internal ConfigEntry<KeyboardShortcut> TerrainToolPreviewToggleHotkey = null!;
+        internal ConfigEntry<Toggle> ToolHud = null!;
+        internal ConfigEntry<Toggle> PavedRoadSmoothHeight = null!;
+        internal ConfigEntry<KeyboardShortcut> ToolWheelModifierHotkey = null!;
+
+        internal void Bind(GroundworkPlugin plugin)
+        {
+            const string group = "2 - Terrain Tools";
+            TerrainToolRangeStep = plugin.config(group, "Terrain Tool Range Step", 0.5f, new ConfigDescription("Range adjustment step for terrain tool pieces configured in Groundwork.yml. Hoe/Cultivator use meters, and Pickaxe terrainDig uses scale units.", new AcceptableValueRange<float>(0.05f, 5f)), synchronizedSetting: false);
+            DefaultPreviewMode = plugin.config(group, "Terrain Tool Default Preview Mode", TerrainToolRangePreviewMode.Vanilla, "Default Hoe/Cultivator terrain range preview mode. Vanilla scales the existing placement ghost visuals. Grid hides those visuals and draws the exact radius plus terrain grid candidate markers.", synchronizedSetting: false);
+            TerrainToolPreviewToggleHotkey = plugin.config(group, "Terrain Tool Preview Toggle Hotkey", new KeyboardShortcut(KeyCode.G), new ConfigDescription("Local hotkey for toggling Hoe/Cultivator terrain modifying pieces between Vanilla and Grid preview while placing.", new AcceptableShortcuts()), synchronizedSetting: false);
+            ToolHud = plugin.config(group, "Tool HUD", Toggle.On, "If on, Hoe/Cultivator terrain range HUD and Pickaxe terrain dig scale HUD are shown.", synchronizedSetting: false);
+            PavedRoadSmoothHeight = plugin.config(group, "Paved Road Smooth Height", Toggle.On, "If on, Paved Road applies its vanilla smooth height operation. Turn off to keep only the paved paint effect.", synchronizedSetting: false);
+            ToolWheelModifierHotkey = plugin.config(group, "Tool Wheel Modifier Hotkey", new KeyboardShortcut(KeyCode.LeftAlt), new ConfigDescription("Local hotkey held while using mouse wheel for Groundwork tool features, including mass planting count, Hoe/Cultivator terrain range, and pickaxe terrainDig scale.", new AcceptableShortcuts()), synchronizedSetting: false);
         }
     }
 
@@ -314,9 +325,6 @@ public class GroundworkPlugin : BaseUnityPlugin
         internal ConfigEntry<float> BeehivePollinationHoneySpeedBonusPercentPerTarget = null!;
         internal ConfigEntry<float> WetEnvironmentPlantGrowSpeedFactor = null!;
         internal ConfigEntry<float> WetEnvironmentForagingRespawnSpeedFactor = null!;
-        internal ConfigEntry<TerrainToolRangePreviewMode> DefaultPreviewMode = null!;
-        internal ConfigEntry<KeyboardShortcut> TerrainToolPreviewToggleHotkey = null!;
-        internal ConfigEntry<Toggle> PavedRoadSmoothHeight = null!;
 
         internal void Bind(GroundworkPlugin plugin)
         {
@@ -325,7 +333,7 @@ public class GroundworkPlugin : BaseUnityPlugin
             const string beehivesGroup = "5 - Beehives";
             const string pollinationGroup = "6 - Pollination";
 
-            MassPlantingEnabled = plugin.config(massPlantingGroup, "Mass Planting Enabled", Toggle.On, "If on, mass planting unlocks by Farming level: 0-19 off, 20-39 plants 5, 40-59 plants 10, 60-79 plants 15, 80-99 plants 20, and 100 plants 25.", synchronizedSetting: true);
+            MassPlantingEnabled = plugin.config(massPlantingGroup, "Mass Planting Enabled", Toggle.On, "If on, mass planting unlocks by Farming level: 0-19 off, 20-39 plants 5, 40-59 plants 10, 60-79 plants 15, 80-99 plants 20, and 100 plants 25. Grid planting is always available.", synchronizedSetting: true);
             ToggleGridPlantingHotkey = plugin.config(massPlantingGroup, "Toggle Grid Planting Hotkey", new KeyboardShortcut(KeyCode.G), new ConfigDescription("Local hotkey for toggling world-grid snapping while a plant piece is selected.", new AcceptableShortcuts()), synchronizedSetting: false);
             MassPlantSpacingFactor = plugin.config(massPlantingGroup, "Mass Plant Spacing Factor", 1.0f, new ConfigDescription("Multiplier for automatic mass-plant spacing. Base spacing is the selected Plant prefab growRadius * 2, so modded crops with their own growRadius are spaced automatically.", new AcceptableValueRange<float>(0.25f, 3f)), synchronizedSetting: true);
             MassPlantSkillGainFactor = plugin.config(massPlantingGroup, "Mass Plant Skill Gain Factor", 0.5f, new ConfigDescription("Additional Farming skill gain for mass planting. Vanilla grants one build-skill raise for the click; this adds (extra planted crops * factor). 0 keeps only the vanilla one-click skill gain.", new AcceptableValueRange<float>(0f, 5f)), synchronizedSetting: true);

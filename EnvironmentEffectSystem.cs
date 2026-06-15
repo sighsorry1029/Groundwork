@@ -1,4 +1,3 @@
-using HarmonyLib;
 using UnityEngine;
 
 namespace Groundwork;
@@ -96,14 +95,5 @@ internal static class EnvironmentEffectSystem
 
         respawnSeconds /= speedFactor;
         return true;
-    }
-}
-
-[HarmonyPatch(typeof(Plant), "GetGrowTime")]
-internal static class PlantGetGrowTimeEnvironmentEffectPatch
-{
-    private static void Postfix(Plant __instance, ref float __result)
-    {
-        EnvironmentEffectSystem.TryModifyPlantGrowTime(__instance, ref __result);
     }
 }
