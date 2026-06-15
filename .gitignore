@@ -1,0 +1,11 @@
+bin/
+obj/
+.idea/
+
+Nexus/
+Thunderstore/Groundwork_v*/
+Thunderstore/*.zip
+
+*.user
+*.suo
+*.DotSettings.user
