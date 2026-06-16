@@ -1,5 +1,5 @@
 groundwork_beehive_header: "{0} ({1} {2}/{3})"
-groundwork_beehive_header_farming: "{0} ({1} {2}/{3}, 농사 +{4})"
+groundwork_beehive_header_farming: "{0} ({1} {2}/{3}, 최대 +{4})"
 groundwork_beehive_cover: "가림: {0} ({1})"
 groundwork_beehive_pollination: "수분: {0}/{1} ({2})"
 groundwork_beehive_night_rate: "밤: {0}"

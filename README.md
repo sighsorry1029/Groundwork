@@ -1,6 +1,6 @@
 # Groundwork
 
-Pollination boosts honey production and plant growth, rain speeds plants, hoe/cultivator ranges scale with grid views, pickaxes dig scaling, scythes harvest all crops, and Farming skill scales mass planting, plant growth, and beehive capacity.
+Pollination boosts honey and plant growth, rain speeds plant growth, hoe/cultivator ranges scale with grid views, pickaxes get scalable digging, scythes harvest all crops, and Farming skill scales mass planting, plant growth, and beehive capacity.
 
 ![](https://i.ibb.co/whdVzJdg/Screenshot-2026-06-16-020402.png) <br>
 Configurable terrain tool scaling with radius and cost. Larger terrain ranges can require proportionally more materials, stamina, and durability, making expanded tools powerful but balanced.

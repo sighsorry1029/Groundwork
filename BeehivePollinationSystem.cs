@@ -56,15 +56,17 @@ internal static class BeehivePollinationSystem
         internal int MaxCount;
         internal float Radius;
         internal bool CanPollinate;
+        internal bool RequireDaylight;
 
         internal int Count => Plants.Count + Pickables.Count;
 
-        internal bool IsFresh(float now, int maxCount, float radius, bool canPollinate)
+        internal bool IsFresh(float now, int maxCount, float radius, bool canPollinate, bool requireDaylight)
         {
             return now - RefreshedAt <= PollinationCacheLifetimeSeconds &&
                    MaxCount == maxCount &&
                    Mathf.Approximately(Radius, radius) &&
-                   CanPollinate == canPollinate;
+                   CanPollinate == canPollinate &&
+                   RequireDaylight == requireDaylight;
         }
 
         internal void Clear()
@@ -80,20 +82,23 @@ internal static class BeehivePollinationSystem
         internal float RefreshedAt = -PollinationCacheMaxIdleSeconds;
         internal float Radius;
         internal Vector3 TargetPosition;
+        internal bool RequireDaylight;
 
-        internal bool IsFresh(float now, float radius, Vector3 targetPosition)
+        internal bool IsFresh(float now, float radius, Vector3 targetPosition, bool requireDaylight)
         {
             return now - RefreshedAt <= PollinationCacheLifetimeSeconds &&
                    Mathf.Approximately(Radius, radius) &&
-                   (TargetPosition - targetPosition).sqrMagnitude <= AssignmentCachePositionEpsilonSqr;
+                   (TargetPosition - targetPosition).sqrMagnitude <= AssignmentCachePositionEpsilonSqr &&
+                   RequireDaylight == requireDaylight;
         }
 
-        internal void Set(Beehive? assignedHive, float now, float radius, Vector3 targetPosition)
+        internal void Set(Beehive? assignedHive, float now, float radius, Vector3 targetPosition, bool requireDaylight)
         {
             AssignedHive = assignedHive;
             RefreshedAt = now;
             Radius = radius;
             TargetPosition = targetPosition;
+            RequireDaylight = requireDaylight;
         }
     }
 
@@ -152,7 +157,7 @@ internal static class BeehivePollinationSystem
                 "groundwork_beehive_next_honey_rate",
                 "Next honey: {0} (Honey rate {1})",
                 nextHoney,
-                FormatMultiplierSuffix(honeyRateMultiplier))
+                FormatMultiplier(honeyRateMultiplier))
             : GroundworkLocalization.Format(
                 "groundwork_beehive_next_honey",
                 "Next honey: {0}",
@@ -270,7 +275,7 @@ internal static class BeehivePollinationSystem
             multiplier *= unloadedCatchup ? ApplyUnloadedCatchupEffectiveness(coverMultiplier) : coverMultiplier;
         }
 
-        float pollinationMultiplier = GetPollinationSummary(beehive).HoneyMultiplier;
+        float pollinationMultiplier = GetPollinationSummary(beehive, requireDaylight: !unloadedCatchup).HoneyMultiplier;
         multiplier *= unloadedCatchup ? ApplyUnloadedCatchupEffectiveness(pollinationMultiplier) : pollinationMultiplier;
         multiplier *= GetNightProductionMultiplier(unloadedCatchup);
         multiplier *= EnvironmentEffectSystem.GetBeehiveRainHoneyRate(unloadedCatchup);
@@ -386,7 +391,7 @@ internal static class BeehivePollinationSystem
     }
 
     // Pollination assignment and cache refresh.
-    private static PollinationSummary GetPollinationSummary(Beehive beehive)
+    private static PollinationSummary GetPollinationSummary(Beehive beehive, bool requireDaylight = true)
     {
         int maxCount = GroundworkToolsDomain.BeehivePollinationMaxPlants;
         float radius = GroundworkToolsDomain.BeehivePollinationRadius;
@@ -397,18 +402,18 @@ internal static class BeehivePollinationSystem
             return new PollinationSummary(0, 0, 1f);
         }
 
-        if (!CanHivePollinate(beehive))
+        if (!CanHivePollinate(beehive, requireDaylight))
         {
             return new PollinationSummary(0, maxCount, 1f);
         }
 
-        PollinationCache? cache = GetPollinationCache(beehive, maxCount, radius, canPollinate: true);
+        PollinationCache? cache = GetPollinationCache(beehive, maxCount, radius, canPollinate: true, requireDaylight);
         int count = cache?.Count ?? 0;
         float honeyMultiplier = 1f + count * GroundworkToolsDomain.BeehivePollinationHoneySpeedBonusPercentPerTarget / 100f;
         return new PollinationSummary(count, maxCount, honeyMultiplier);
     }
 
-    private static PollinationCache? GetPollinationCache(Beehive beehive, int maxCount, float radius, bool canPollinate)
+    private static PollinationCache? GetPollinationCache(Beehive beehive, int maxCount, float radius, bool canPollinate, bool requireDaylight = true)
     {
         if (beehive == null || maxCount <= 0 || radius <= 0f)
         {
@@ -423,21 +428,22 @@ internal static class BeehivePollinationSystem
             PollinationCaches[beehive] = cache;
         }
 
-        if (!cache.IsFresh(now, maxCount, radius, canPollinate))
+        if (!cache.IsFresh(now, maxCount, radius, canPollinate, requireDaylight))
         {
-            RefreshPollinationCache(beehive, cache, maxCount, radius, canPollinate, now);
+            RefreshPollinationCache(beehive, cache, maxCount, radius, canPollinate, requireDaylight, now);
         }
 
         return cache;
     }
 
-    private static void RefreshPollinationCache(Beehive beehive, PollinationCache cache, int maxCount, float radius, bool canPollinate, float now)
+    private static void RefreshPollinationCache(Beehive beehive, PollinationCache cache, int maxCount, float radius, bool canPollinate, bool requireDaylight, float now)
     {
         cache.Clear();
         cache.RefreshedAt = now;
         cache.MaxCount = maxCount;
         cache.Radius = radius;
         cache.CanPollinate = canPollinate;
+        cache.RequireDaylight = requireDaylight;
         if (!canPollinate)
         {
             return;
@@ -468,7 +474,7 @@ internal static class BeehivePollinationSystem
                 {
                     if (SeenPlants.Add(plant) &&
                         IsGrowingTarget(plant) &&
-                        IsAssignedToHive(plant, beehive, radius))
+                        IsAssignedToHive(plant, beehive, radius, requireDaylight))
                     {
                         AddPollinationCandidate(plant, null, plant.transform.position, beehive.transform.position, plant.GetInstanceID());
                     }
@@ -480,7 +486,7 @@ internal static class BeehivePollinationSystem
                 if (pickable != null &&
                     SeenPickables.Add(pickable) &&
                     IsGrowingTarget(pickable) &&
-                    IsAssignedToHive(pickable, beehive, radius))
+                    IsAssignedToHive(pickable, beehive, radius, requireDaylight))
                 {
                     AddPollinationCandidate(null, pickable, pickable.transform.position, beehive.transform.position, pickable.GetInstanceID());
                 }
@@ -564,9 +570,9 @@ internal static class BeehivePollinationSystem
             : 1f;
     }
 
-    private static bool IsAssignedToHive(Component target, Beehive candidate, float radius)
+    private static bool IsAssignedToHive(Component target, Beehive candidate, float radius, bool requireDaylight)
     {
-        return FindAssignedHive(target, radius) == candidate;
+        return FindAssignedHive(target, radius, requireDaylight) == candidate;
     }
 
     private static void AddPollinationCandidate(Plant? plant, Pickable? pickable, Vector3 targetPosition, Vector3 hivePosition, int instanceId)
@@ -579,7 +585,7 @@ internal static class BeehivePollinationSystem
             instanceId));
     }
 
-    private static Beehive? FindAssignedHive(Component target, float radius)
+    private static Beehive? FindAssignedHive(Component target, float radius, bool requireDaylight = true)
     {
         if (target == null || radius <= 0f)
         {
@@ -595,20 +601,20 @@ internal static class BeehivePollinationSystem
             AssignmentCaches[target] = cache;
         }
 
-        if (cache.IsFresh(now, radius, targetPosition))
+        if (cache.IsFresh(now, radius, targetPosition, requireDaylight))
         {
-            if (cache.AssignedHive == null || CanHivePollinate(cache.AssignedHive))
+            if (cache.AssignedHive == null || CanHivePollinate(cache.AssignedHive, requireDaylight))
             {
                 return cache.AssignedHive;
             }
         }
 
-        Beehive? assignedHive = FindAssignedHiveUncached(targetPosition, radius);
-        cache.Set(assignedHive, now, radius, targetPosition);
+        Beehive? assignedHive = FindAssignedHiveUncached(targetPosition, radius, requireDaylight);
+        cache.Set(assignedHive, now, radius, targetPosition, requireDaylight);
         return assignedHive;
     }
 
-    private static Beehive? FindAssignedHiveUncached(Vector3 targetPosition, float radius)
+    private static Beehive? FindAssignedHiveUncached(Vector3 targetPosition, float radius, bool requireDaylight)
     {
         if (radius <= 0f)
         {
@@ -640,7 +646,7 @@ internal static class BeehivePollinationSystem
                 Beehive? hive = hit.GetComponentInParent<Beehive>();
                 if (hive == null ||
                     !SeenHives.Add(hive) ||
-                    !CanHivePollinate(hive))
+                    !CanHivePollinate(hive, requireDaylight))
                 {
                     continue;
                 }
@@ -870,11 +876,12 @@ internal static class BeehivePollinationSystem
         return Mathf.Lerp(1f, Mathf.Max(1f, maxMultiplier), emptyFactor);
     }
 
-    private static bool CanHivePollinate(Beehive beehive)
+    private static bool CanHivePollinate(Beehive beehive, bool requireDaylight = true)
     {
         if (!GroundworkToolsDomain.BeehivePollinationFeatureEnabled ||
             beehive == null ||
             !IsValid(beehive) ||
+            (requireDaylight && IsNight()) ||
             EnvironmentEffectSystem.IsWetEnvironment() ||
             GetHoneyLevel(beehive) >= GetEffectiveMaxHoney(beehive) ||
             !IsBiomeAllowed(beehive))
@@ -883,6 +890,11 @@ internal static class BeehivePollinationSystem
         }
 
         return !TryGetCoverPercentage(beehive, out float coverPercentage) || HasFreeSpace(beehive, coverPercentage);
+    }
+
+    private static bool IsNight()
+    {
+        return EnvMan.instance != null && !EnvMan.IsDaylight();
     }
 
     private static bool IsGrowingTarget(Plant plant)
@@ -968,7 +980,7 @@ internal static class BeehivePollinationSystem
         string header = farmingCapacityBonus > 0
             ? GroundworkLocalization.Format(
                 "groundwork_beehive_header_farming",
-                "{0} ({1} {2}/{3}, Farming +{4})",
+                "{0} ({1} {2}/{3}, Max +{4})",
                 beehiveName,
                 honeyName,
                 honeyLevel,
@@ -1134,11 +1146,6 @@ internal static class BeehivePollinationSystem
     private static string FormatMultiplier(float value)
     {
         return "x" + value.ToString("0.#", CultureInfo.InvariantCulture);
-    }
-
-    private static string FormatMultiplierSuffix(float value)
-    {
-        return value.ToString("0.#", CultureInfo.InvariantCulture) + "x";
     }
 
     // Formatting and vanilla hover header replacement.

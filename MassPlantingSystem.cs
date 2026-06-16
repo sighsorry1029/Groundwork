@@ -19,6 +19,7 @@ internal static class MassPlantingSystem
     private static readonly int OriginalGhostEmissionColorProperty = Shader.PropertyToID("_EmissionColor");
     private static readonly Collider[] SpaceHits = new Collider[128];
     private static readonly List<PlantSlot> PlantSlots = [];
+    private static readonly List<Vector3> ReservedPlantPositions = [];
     private static readonly List<PlantPreviewGhost> PreviewGhosts = [];
     private static readonly MethodInfo? UpdatePlacementGhostMethod = AccessTools.Method(typeof(Player), "UpdatePlacementGhost", [typeof(bool)]);
     private static readonly MethodInfo? GetBuildStaminaMethod = AccessTools.Method(typeof(Player), "GetBuildStamina");
@@ -246,6 +247,8 @@ internal static class MassPlantingSystem
         _placingBatch = true;
         try
         {
+            ReservedPlantPositions.Clear();
+            Physics.SyncTransforms();
             for (int i = 0; i < PlantSlots.Count; i++)
             {
                 if (i >= placeLimit)
@@ -260,7 +263,9 @@ internal static class MassPlantingSystem
                     position.y = groundHeight;
                 }
 
-                PlacementFailure failure = ValidatePlantPosition(player, piece, plant, position);
+                PlacementFailure failure = HasReservedPlantSpace(plant, position)
+                    ? ValidatePlantPosition(player, piece, plant, position)
+                    : PlacementFailure.MoreSpace;
                 if (failure != PlacementFailure.None)
                 {
                     if (firstFailure == PlacementFailure.None)
@@ -275,6 +280,8 @@ internal static class MassPlantingSystem
                 ZLog.Log("Placed " + piece.gameObject.name);
                 Game.instance?.IncrementPlayerStat(PlayerStatType.Builds);
                 player.PlacePiece(piece, position, plantRotation, doAttack: placed == 0);
+                SyncPlacedPlantZdo(plant, position, plantRotation);
+                ReservedPlantPositions.Add(position);
                 placed++;
             }
         }
@@ -282,6 +289,7 @@ internal static class MassPlantingSystem
         {
             _placingBatch = false;
             PlantSlots.Clear();
+            ReservedPlantPositions.Clear();
         }
 
         if (placed <= 0)
@@ -1539,6 +1547,91 @@ internal static class MassPlantingSystem
         }
 
         return true;
+    }
+
+    private static bool HasReservedPlantSpace(Plant plant, Vector3 position)
+    {
+        if (ReservedPlantPositions.Count == 0)
+        {
+            return true;
+        }
+
+        float radius = Mathf.Max(0.05f, plant.m_growRadius);
+        if (plant.m_growRadiusVines > 0f)
+        {
+            radius = Mathf.Max(radius, plant.m_growRadiusVines);
+        }
+
+        float radiusSqr = radius * radius;
+        foreach (Vector3 reservedPosition in ReservedPlantPositions)
+        {
+            float x = reservedPosition.x - position.x;
+            float z = reservedPosition.z - position.z;
+            if (x * x + z * z < radiusSqr)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void SyncPlacedPlantZdo(Plant prefabPlant, Vector3 position, Quaternion rotation)
+    {
+        Physics.SyncTransforms();
+
+        float searchRadius = Mathf.Max(0.5f, prefabPlant.m_growRadius);
+        if (prefabPlant.m_growRadiusVines > 0f)
+        {
+            searchRadius = Mathf.Max(searchRadius, prefabPlant.m_growRadiusVines);
+        }
+
+        int count = Physics.OverlapSphereNonAlloc(
+            position,
+            searchRadius,
+            SpaceHits,
+            GetSpaceMask(),
+            QueryTriggerInteraction.UseGlobal);
+
+        Plant? placedPlant = null;
+        float bestDistance = float.MaxValue;
+        for (int i = 0; i < count; i++)
+        {
+            Collider hit = SpaceHits[i];
+            Plant? candidate = hit != null ? hit.GetComponentInParent<Plant>() : null;
+            if (candidate == null ||
+                candidate.m_nview == null ||
+                !candidate.m_nview.IsValid() ||
+                !candidate.m_nview.IsOwner() ||
+                !string.Equals(candidate.m_name, prefabPlant.m_name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            float distance = (candidate.transform.position - position).sqrMagnitude;
+            if (distance < bestDistance)
+            {
+                placedPlant = candidate;
+                bestDistance = distance;
+            }
+        }
+
+        if (placedPlant == null)
+        {
+            return;
+        }
+
+        bool transformChanged =
+            (placedPlant.transform.position - position).sqrMagnitude > 0.0001f ||
+            Quaternion.Angle(placedPlant.transform.rotation, rotation) > 0.01f;
+        placedPlant.transform.SetPositionAndRotation(position, rotation);
+        ZDO? zdo = placedPlant.m_nview.GetZDO();
+        zdo?.SetPosition(position);
+        zdo?.SetRotation(rotation);
+        if (transformChanged)
+        {
+            Physics.SyncTransforms();
+        }
     }
 
     private static bool IsPlacementGhostCollider(GameObject? placementGhost, Collider hit)

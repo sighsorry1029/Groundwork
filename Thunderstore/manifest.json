@@ -1,8 +1,8 @@
 ﻿{
   "name": "Groundwork",
-  "version_number": "1.0.1",
+  "version_number": "1.0.2",
   "website_url": "https://discord.gg/jkcJCq2sK5",
-  "description": "Pollination boosts honey production and plant growth, rain speeds plants, hoe/cultivator ranges scale with grid views, pickaxes dig scaling, scythes harvest all crops, and Farming skill scales mass planting, plant growth, and beehive capacity.",
+  "description": "Pollination boosts honey and plant growth, rain speeds plant growth, hoe/cultivator ranges scale with grid views, pickaxes get scalable digging, scythes harvest all crops, and Farming skill scales mass planting, plant growth, and beehive capacity.",
   "dependencies": [
     "denikson-BepInExPack_Valheim-5.4.2333"
   ]
