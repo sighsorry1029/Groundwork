@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -37,6 +38,7 @@ internal static class TerrainToolRangeSystem
     private static readonly Dictionary<string, float> CurrentRanges = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<Player, PendingPlacementCost> PendingPlacementCosts = new();
     private static readonly Dictionary<Player, TerrainToolRule> ActivePlacementRules = new();
+    private static readonly Dictionary<Player, ActiveGridPlacementState> ActiveGridPlacementStates = new();
     private static readonly HashSet<string> ReportedWarnings = new(StringComparer.OrdinalIgnoreCase);
     private static TerrainToolRule? ActiveRangeRule;
     private static GroundworkPlugin.TerrainToolRangePreviewMode? ActivePreviewMode;
@@ -64,6 +66,7 @@ internal static class TerrainToolRangeSystem
     private static Color CustomRangePreviewColor = FallbackPreviewRingColor;
     private static int CustomGridPreviewSignature;
     private static bool CustomGridPreviewSignatureValid;
+    private static GridPreviewState? LastGridPreviewState;
     private static readonly List<Heightmap> CustomRangePreviewHeightmaps = [];
     private static readonly List<Heightmap> CustomGridPreviewHeightmaps = [];
     private static readonly List<Vector3> CustomGridPreviewVertices = [];
@@ -214,7 +217,7 @@ internal static class TerrainToolRangeSystem
         if (IsGridRangePreviewEnabled())
         {
             ResetScaledPlacementGhost();
-            ApplyCustomRangePreview(ghost, terrainOps, range);
+            ApplyCustomRangePreview(ghost, terrainOps, rule, range);
         }
         else
         {
@@ -299,6 +302,14 @@ internal static class TerrainToolRangeSystem
         }
 
         ActivePlacementRules[player] = rule;
+        if (TryCreateActiveGridPlacementState(rule, out ActiveGridPlacementState? gridPlacementState))
+        {
+            ActiveGridPlacementStates[player] = gridPlacementState;
+        }
+        else
+        {
+            ActiveGridPlacementStates.Remove(player);
+        }
     }
 
     internal static void EndTryPlacePiece(Player player, Piece piece, bool placed)
@@ -315,6 +326,7 @@ internal static class TerrainToolRangeSystem
         }
 
         ActivePlacementRules.Remove(player);
+        ActiveGridPlacementStates.Remove(player);
     }
 
     internal static TerrainOpSettingsState? PrepareTerrainOp(TerrainOp terrainOp)
@@ -329,6 +341,7 @@ internal static class TerrainToolRangeSystem
         TerrainOpSettingsState state = TerrainOpSettingsState.Capture(terrainOp.m_settings);
         ApplyTerrainOpOverrides(terrainOp.m_settings, rule);
         ApplyRangeToSettings(terrainOp.m_settings, GetCurrentRange(rule));
+        ApplyCapturedGridPreviewPosition(Player.m_localPlayer, terrainOp);
         return state;
     }
 
@@ -540,6 +553,8 @@ internal static class TerrainToolRangeSystem
         RuleTemplatesByTool.Clear();
         PendingPlacementCosts.Clear();
         ActivePlacementRules.Clear();
+        ActiveGridPlacementStates.Clear();
+        LastGridPreviewState = null;
         ActiveRangeRule = null;
         ActivePreviewMode = null;
         ClearRangePreview();
@@ -916,7 +931,7 @@ internal static class TerrainToolRangeSystem
     }
 
     // Custom terrain range and grid preview rendering.
-    private static void ApplyCustomRangePreview(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, float range)
+    private static void ApplyCustomRangePreview(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, TerrainToolRule rule, float range)
     {
         if (ghost == null)
         {
@@ -933,6 +948,7 @@ internal static class TerrainToolRangeSystem
         }
 
         KeepVanillaPreviewVisualsHidden();
+        CaptureLastGridPreviewState(ghost, terrainOps, rule);
 
         LineRenderer? lineRenderer = EnsureCustomRangePreviewLine();
         if (lineRenderer == null)
@@ -1205,6 +1221,107 @@ internal static class TerrainToolRangeSystem
     private static void InvalidateCustomGridPreview()
     {
         CustomGridPreviewSignatureValid = false;
+    }
+
+    private static void CaptureLastGridPreviewState(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, TerrainToolRule rule)
+    {
+        if (ghost == null ||
+            rule == null ||
+            Player.m_localPlayer == null ||
+            ActivePlacementRules.ContainsKey(Player.m_localPlayer))
+        {
+            return;
+        }
+
+        List<GridPreviewOperationState> operations = [];
+        Transform root = ghost.transform;
+        foreach (TerrainOp terrainOp in terrainOps)
+        {
+            if (terrainOp == null ||
+                !TryResolveRepresentativeOperation(
+                    terrainOp,
+                    out _,
+                    out _,
+                    out _,
+                    out _,
+                    out _))
+            {
+                continue;
+            }
+
+            operations.Add(new GridPreviewOperationState(
+                GetRelativeTransformPath(terrainOp.transform, root),
+                terrainOp.transform.position));
+        }
+
+        LastGridPreviewState = operations.Count > 0
+            ? new GridPreviewState(rule.Id, operations)
+            : null;
+    }
+
+    private static bool TryCreateActiveGridPlacementState(TerrainToolRule rule, [NotNullWhen(true)] out ActiveGridPlacementState? state)
+    {
+        state = null;
+        if (rule == null ||
+            GetCurrentPreviewMode() != GroundworkPlugin.TerrainToolRangePreviewMode.Grid ||
+            LastGridPreviewState == null ||
+            !string.Equals(LastGridPreviewState.RuleId, rule.Id, StringComparison.Ordinal) ||
+            LastGridPreviewState.Operations.Count == 0)
+        {
+            return false;
+        }
+
+        state = new ActiveGridPlacementState(LastGridPreviewState);
+        return true;
+    }
+
+    private static void ApplyCapturedGridPreviewPosition(Player? player, TerrainOp terrainOp)
+    {
+        if (player == null ||
+            terrainOp == null ||
+            !ActiveGridPlacementStates.TryGetValue(player, out ActiveGridPlacementState? state) ||
+            !TryResolveRepresentativeOperation(
+                terrainOp,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _))
+        {
+            return;
+        }
+
+        Transform root = ResolveTerrainOpRoot(terrainOp);
+        string path = GetRelativeTransformPath(terrainOp.transform, root);
+        if (state.TryConsume(path, out Vector3 previewPosition))
+        {
+            terrainOp.transform.position = previewPosition;
+        }
+    }
+
+    private static Transform ResolveTerrainOpRoot(TerrainOp terrainOp)
+    {
+        Piece? piece = terrainOp.GetComponentInParent<Piece>();
+        return piece != null ? piece.transform : terrainOp.transform.root;
+    }
+
+    private static string GetRelativeTransformPath(Transform transform, Transform root)
+    {
+        if (transform == null || root == null || transform == root)
+        {
+            return string.Empty;
+        }
+
+        List<string> segments = [];
+        Transform? current = transform;
+        while (current != null && current != root)
+        {
+            segments.Add(current.GetSiblingIndex().ToString(CultureInfo.InvariantCulture) + ":" + current.name);
+            current = current.parent;
+        }
+
+        segments.Reverse();
+        return string.Join("/", segments);
     }
 
     private static void AddCustomGridPreviewOperation(
@@ -1675,6 +1792,7 @@ internal static class TerrainToolRangeSystem
     {
         RestoreHiddenPreviewVisuals();
         CustomRangePreviewGhost = null;
+        LastGridPreviewState = null;
         InvalidateCustomGridPreview();
         if (CustomRangePreviewObject != null)
         {
@@ -2045,6 +2163,79 @@ internal static class TerrainToolRangeSystem
         internal bool IsValidForFrame(int frame)
         {
             return frame - Frame <= 1;
+        }
+    }
+
+    private sealed class GridPreviewState
+    {
+        internal GridPreviewState(string ruleId, IReadOnlyList<GridPreviewOperationState> operations)
+        {
+            RuleId = ruleId;
+            Operations = operations.ToArray();
+        }
+
+        internal string RuleId { get; }
+
+        internal IReadOnlyList<GridPreviewOperationState> Operations { get; }
+    }
+
+    private readonly struct GridPreviewOperationState(string path, Vector3 transformPosition)
+    {
+        internal readonly string Path = path;
+
+        internal readonly Vector3 TransformPosition = transformPosition;
+    }
+
+    private sealed class ActiveGridPlacementState
+    {
+        private readonly GridPreviewOperationState[] _operations;
+        private readonly bool[] _usedOperations;
+
+        internal ActiveGridPlacementState(GridPreviewState previewState)
+        {
+            _operations = previewState.Operations.ToArray();
+            _usedOperations = new bool[_operations.Length];
+        }
+
+        internal bool TryConsume(string path, out Vector3 transformPosition)
+        {
+            for (int index = 0; index < _operations.Length; index++)
+            {
+                if (!_usedOperations[index] &&
+                    string.Equals(_operations[index].Path, path, StringComparison.Ordinal))
+                {
+                    _usedOperations[index] = true;
+                    transformPosition = _operations[index].TransformPosition;
+                    return true;
+                }
+            }
+
+            int unusedIndex = -1;
+            for (int index = 0; index < _operations.Length; index++)
+            {
+                if (_usedOperations[index])
+                {
+                    continue;
+                }
+
+                if (unusedIndex >= 0)
+                {
+                    transformPosition = default;
+                    return false;
+                }
+
+                unusedIndex = index;
+            }
+
+            if (unusedIndex >= 0)
+            {
+                _usedOperations[unusedIndex] = true;
+                transformPosition = _operations[unusedIndex].TransformPosition;
+                return true;
+            }
+
+            transformPosition = default;
+            return false;
         }
     }
 
