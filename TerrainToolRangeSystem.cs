@@ -247,7 +247,7 @@ internal static class TerrainToolRangeSystem
         string rangeHint = shortcut.Length == 0
             ? GroundworkLocalization.Text("groundwork_terrain_range_hotkey_unbound", "Terrain range adjustment hotkey is unbound")
             : GroundworkLocalization.Format("groundwork_terrain_range_adjust_hint", "{0} + Mouse Wheel: adjust terrain range", shortcut);
-        string rangeInfo = "<color=orange>" + rangeHint + "</color>\n" +
+        string rangeInfo = rangeHint + "\n" +
                            GroundworkLocalization.Format(
                                "groundwork_terrain_current_range",
                                "Current range: {0}m",
