@@ -25,7 +25,7 @@ internal static class GroundworkToolsDomain
         Mathf.Clamp(Farming.MassPlantSkillGainFactor?.Value ?? 0f, 0f, 5f);
 
     internal static float TerrainToolRangeStep =>
-        Mathf.Max(0.05f, TerrainTools.TerrainToolRangeStep?.Value ?? 1f);
+        Mathf.Max(0.05f, TerrainTools.TerrainToolRangeStep?.Value ?? 0.5f);
 
     internal static GroundworkPlugin.TerrainToolRangePreviewMode TerrainToolDefaultPreviewMode =>
         TerrainTools.DefaultPreviewMode?.Value ?? GroundworkPlugin.TerrainToolRangePreviewMode.Vanilla;
@@ -61,7 +61,7 @@ internal static class GroundworkToolsDomain
         Mathf.Clamp(Farming.BeehiveNightHoneyRate?.Value ?? 1f, 0f, 1f);
 
     internal static float BeehiveRainHoneyRate =>
-        Mathf.Clamp(Farming.BeehiveRainHoneyRate?.Value ?? 0f, 0f, 1f);
+        Mathf.Clamp(Farming.BeehiveRainHoneyRate?.Value ?? 1f, 0f, 1f);
 
     internal static float BeehivePollinationRadius =>
         Mathf.Max(0f, Farming.BeehivePollinationRadius?.Value ?? 0f);

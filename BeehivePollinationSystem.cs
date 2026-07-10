@@ -16,8 +16,9 @@ internal static class BeehivePollinationSystem
     private const float UnloadedCatchupEffectiveness = 0.5f;
     private const float UnloadedCatchupThresholdSeconds = 30f;
     private const float UnloadedCatchupDaylightShare = 0.5f;
-    private static readonly Collider[] PollinationHits = new Collider[256];
-    private static readonly Collider[] AssignmentHits = new Collider[128];
+    private const int PollinationSearchMaxBufferSize = 2048;
+    private static Collider[] PollinationHits = new Collider[256];
+    private static Collider[] AssignmentHits = new Collider[128];
     private static readonly Dictionary<Beehive, PollinationCache> PollinationCaches = [];
     private static readonly Dictionary<Component, AssignmentCache> AssignmentCaches = [];
     private static readonly Dictionary<Component, long> LoadedSinceTicksByTarget = [];
@@ -31,6 +32,8 @@ internal static class BeehivePollinationSystem
     private static Player? _placingPlayer;
     private static int _pollinationMask;
     private static float _nextPollinationCachePruneAt;
+    private static bool _reportedPollinationSearchSaturation;
+    private static bool _reportedAssignmentSearchSaturation;
 
     internal readonly struct PollinationSummary(int count, int maxCount, float honeyMultiplier)
     {
@@ -387,7 +390,7 @@ internal static class BeehivePollinationSystem
         float product = zdo.GetFloat(ZDOVars.s_product);
         float elapsed = GetSecondsSinceLastUpdate(zdo);
         float remainingSeconds = Mathf.Max(0f, effectiveSecondsPerHoney - product - elapsed);
-        return FormatSeconds(remainingSeconds);
+        return GroundworkLocalization.FormatDuration(remainingSeconds);
     }
 
     // Pollination assignment and cache refresh.
@@ -449,12 +452,12 @@ internal static class BeehivePollinationSystem
             return;
         }
 
-        int hitCount = Physics.OverlapSphereNonAlloc(
+        int hitCount = OverlapSphereWithExpandableBuffer(
             beehive.transform.position,
             radius,
-            PollinationHits,
-            GetPollinationMask(),
-            QueryTriggerInteraction.UseGlobal);
+            ref PollinationHits,
+            ref _reportedPollinationSearchSaturation,
+            "beehive target");
 
         SeenPlants.Clear();
         SeenPickables.Clear();
@@ -621,12 +624,12 @@ internal static class BeehivePollinationSystem
             return null;
         }
 
-        int hitCount = Physics.OverlapSphereNonAlloc(
+        int hitCount = OverlapSphereWithExpandableBuffer(
             targetPosition,
             radius,
-            AssignmentHits,
-            GetPollinationMask(),
-            QueryTriggerInteraction.UseGlobal);
+            ref AssignmentHits,
+            ref _reportedAssignmentSearchSaturation,
+            "target assignment");
 
         Beehive? bestHive = null;
         float bestHorizontalDistance = float.MaxValue;
@@ -1128,6 +1131,43 @@ internal static class BeehivePollinationSystem
         return _pollinationMask;
     }
 
+    private static int OverlapSphereWithExpandableBuffer(
+        Vector3 center,
+        float radius,
+        ref Collider[] buffer,
+        ref bool reported,
+        string searchName)
+    {
+        while (true)
+        {
+            int hitCount = Physics.OverlapSphereNonAlloc(
+                center,
+                radius,
+                buffer,
+                GetPollinationMask(),
+                QueryTriggerInteraction.UseGlobal);
+            if (hitCount < buffer.Length)
+            {
+                return hitCount;
+            }
+
+            if (buffer.Length >= PollinationSearchMaxBufferSize)
+            {
+                if (!reported)
+                {
+                    reported = true;
+                    GroundworkPlugin.ModLogger.LogWarning(
+                        $"Pollination {searchName} search reached the {buffer.Length}-collider maximum buffer capacity. " +
+                        "Results may be truncated in this unusually dense area; reduce the pollination radius or object density.");
+                }
+
+                return hitCount;
+            }
+
+            Array.Resize(ref buffer, Math.Min(buffer.Length * 2, PollinationSearchMaxBufferSize));
+        }
+    }
+
     private static void AppendLine(ref string text, string line)
     {
         text = string.IsNullOrEmpty(text) ? line : text + "\n" + line;
@@ -1148,11 +1188,6 @@ internal static class BeehivePollinationSystem
         return "x" + value.ToString("0.#", CultureInfo.InvariantCulture);
     }
 
-    // Formatting and vanilla hover header replacement.
-    private static string FormatSeconds(float seconds)
-    {
-        return GroundworkLocalization.FormatDuration(seconds);
-    }
 }
 
 // Harmony patches.
@@ -1202,7 +1237,7 @@ internal static class BeehiveUpdateBeesPollinationPatch
         return true;
     }
 
-    private static void Postfix(Beehive __instance, float __state)
+    private static void Finalizer(Beehive __instance, float __state)
     {
         if (__state > 0f)
         {
@@ -1220,7 +1255,7 @@ internal static class BeehiveIncreaseLevelPollinationPatch
         __instance.m_maxHoney = BeehivePollinationSystem.GetEffectiveMaxHoney(__instance);
     }
 
-    private static void Postfix(Beehive __instance, int __state)
+    private static void Finalizer(Beehive __instance, int __state)
     {
         if (__state > 0)
         {

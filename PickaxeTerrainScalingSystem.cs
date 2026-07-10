@@ -176,16 +176,6 @@ internal static class PickaxeTerrainScalingSystem
         RefreshKeyHintUi();
     }
 
-    internal static bool ShouldSuppressCameraZoom()
-    {
-        if (!ShouldSuppressCameraZoomInput() || Mathf.Abs(ZInput.GetMouseScrollWheel()) < 0.01f)
-        {
-            return SuppressCameraZoomThisFrame;
-        }
-
-        return true;
-    }
-
     internal static bool ShouldSuppressCameraZoomInput()
     {
         if (Player.m_localPlayer == null ||
@@ -896,7 +886,7 @@ internal static class AttackDoMeleeAttackPickaxeTerrainScalingPatch
         PickaxeTerrainScalingSystem.BeginMeleeAttack(__instance);
     }
 
-    private static void Postfix(Attack __instance)
+    private static void Finalizer(Attack __instance)
     {
         PickaxeTerrainScalingSystem.EndMeleeAttack(__instance);
     }
@@ -926,6 +916,18 @@ internal static class AttackSpawnOnHitTerrainPickaxeScalingPatch
     private static void Postfix(GameObject? __result, PickaxeTerrainScalingSystem.TerrainScalingScope? __state)
     {
         PickaxeTerrainScalingSystem.End(__state, __result);
+    }
+
+    private static System.Exception? Finalizer(
+        PickaxeTerrainScalingSystem.TerrainScalingScope? __state,
+        System.Exception? __exception)
+    {
+        if (__exception != null)
+        {
+            __state?.Restore();
+        }
+
+        return __exception;
     }
 }
 

@@ -609,10 +609,11 @@ internal static class PlayerPlacePieceFarmingTrackingPatch
 }
 
 [HarmonyPatch(typeof(Plant), nameof(Plant.Awake))]
-internal static class PlantAwakePlanterSkillPatch
+internal static class PlantAwakeGroundworkPatch
 {
     private static void Postfix(Plant __instance)
     {
+        MassPlantingSystem.TrySynchronizePendingPlant(__instance);
         BeehivePollinationSystem.TrackLoadedTarget(__instance);
         FarmingSkillSystem.TryStorePlanterSkill(__instance);
     }

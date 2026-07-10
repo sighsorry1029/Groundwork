@@ -2,41 +2,6 @@ using HarmonyLib;
 
 namespace Groundwork;
 
-internal static class GroundworkHarmonyDispatch
-{
-    internal static void PlayerUpdatePostfix(Player player)
-    {
-        if (player == Player.m_localPlayer)
-        {
-            MassPlantingSystem.RefreshBuildHintUi();
-            MassPlantingSystem.UpdateInput(player);
-            TerrainToolRangeSystem.UpdateInput(player);
-            PickaxeTerrainScalingSystem.RefreshKeyHintUi();
-            TerrainDigFloatingTextSystem.Update();
-        }
-
-        PickaxeTerrainScalingSystem.UpdateInput(player);
-    }
-
-    internal static void PlayerUpdatePlacementGhostPostfix(Player player)
-    {
-        MassPlantingSystem.TrySnapPlacementGhost(player);
-        MassPlantingSystem.UpdatePlacementPreview(player);
-        TerrainToolRangeSystem.ApplyCurrentRangeToGhost(player);
-    }
-
-    internal static bool PlayerTryPlacePiecePrefix(Player player, Piece piece, ref bool result)
-    {
-        TerrainToolRangeSystem.BeginTryPlacePiece(player, piece);
-        return MassPlantingSystem.TryInterceptPlace(player, piece, ref result);
-    }
-
-    internal static void PlayerTryPlacePiecePostfix(Player player, Piece piece, bool result)
-    {
-        TerrainToolRangeSystem.EndTryPlacePiece(player, piece, result);
-    }
-}
-
 [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.Awake))]
 internal static class ObjectDbAwakeGroundworkPatch
 {
@@ -69,7 +34,14 @@ internal static class PlayerUpdateGroundworkPatch
         try
         {
             GroundworkPlugin.TryApplyPendingConfig();
-            GroundworkHarmonyDispatch.PlayerUpdatePostfix(__instance);
+            if (__instance == Player.m_localPlayer)
+            {
+                MassPlantingSystem.UpdateInput(__instance);
+                TerrainToolRangeSystem.UpdateInput(__instance);
+                TerrainDigFloatingTextSystem.Update();
+            }
+
+            PickaxeTerrainScalingSystem.UpdateInput(__instance);
         }
         finally
         {
@@ -88,7 +60,9 @@ internal static class PlayerUpdatePlacementGhostGroundworkPatch
 {
     private static void Postfix(Player __instance)
     {
-        GroundworkHarmonyDispatch.PlayerUpdatePlacementGhostPostfix(__instance);
+        MassPlantingSystem.TrySnapPlacementGhost(__instance);
+        MassPlantingSystem.UpdatePlacementPreview(__instance);
+        TerrainToolRangeSystem.ApplyCurrentRangeToGhost(__instance);
     }
 }
 
@@ -97,12 +71,18 @@ internal static class PlayerTryPlacePieceGroundworkPatch
 {
     private static bool Prefix(Player __instance, Piece piece, ref bool __result)
     {
-        return GroundworkHarmonyDispatch.PlayerTryPlacePiecePrefix(__instance, piece, ref __result);
+        TerrainToolRangeSystem.BeginTryPlacePiece(__instance, piece);
+        return MassPlantingSystem.TryInterceptPlace(__instance, piece, ref __result);
     }
 
-    private static void Postfix(Player __instance, Piece piece, bool __result)
+    private static System.Exception? Finalizer(
+        Player __instance,
+        Piece piece,
+        bool __result,
+        System.Exception? __exception)
     {
-        GroundworkHarmonyDispatch.PlayerTryPlacePiecePostfix(__instance, piece, __result);
+        TerrainToolRangeSystem.EndTryPlacePiece(__instance, piece, __exception == null && __result);
+        return __exception;
     }
 }
 

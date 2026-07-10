@@ -34,7 +34,7 @@ internal static class TerrainToolRangeSystem
     private static readonly Color FallbackPreviewRingColor = new(1f, 0.95f, 0.78f, 0.86f);
     private static readonly ConditionalWeakTable<ObjectDB, ObjectDbState> ObjectDbStates = new();
     private static readonly Dictionary<Piece, TerrainToolRule> RulesByPiece = new();
-    private static readonly Dictionary<string, List<TerrainToolRuleTemplate>> RuleTemplatesByTool = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, List<NormalizedTerrainToolConfig>> RuleConfigsByTool = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, float> CurrentRanges = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<Player, PendingPlacementCost> PendingPlacementCosts = new();
     private static readonly Dictionary<Player, TerrainToolRule> ActivePlacementRules = new();
@@ -106,17 +106,16 @@ internal static class TerrainToolRangeSystem
 
         foreach (NormalizedTerrainToolConfig config in configs)
         {
-            TerrainToolRuleTemplate template = new(config);
-            if (!RuleTemplatesByTool.TryGetValue(template.ToolPrefabName, out List<TerrainToolRuleTemplate>? templates))
+            if (!RuleConfigsByTool.TryGetValue(config.ToolPrefabName, out List<NormalizedTerrainToolConfig>? toolConfigs))
             {
-                templates = new List<TerrainToolRuleTemplate>();
-                RuleTemplatesByTool[template.ToolPrefabName] = templates;
+                toolConfigs = [];
+                RuleConfigsByTool[config.ToolPrefabName] = toolConfigs;
             }
 
-            templates.Add(template);
+            toolConfigs.Add(config);
         }
 
-        foreach (string toolPrefabName in RuleTemplatesByTool.Keys)
+        foreach (string toolPrefabName in RuleConfigsByTool.Keys)
         {
             GameObject? toolPrefab = objectDb.GetItemPrefab(toolPrefabName);
             PieceTable? pieceTable = toolPrefab?.GetComponent<ItemDrop>()?.m_itemData?.m_shared?.m_buildPieces;
@@ -136,7 +135,7 @@ internal static class TerrainToolRangeSystem
 
         string toolPrefabName = ResolveCurrentToolPrefabName(player);
         if (string.IsNullOrWhiteSpace(toolPrefabName) ||
-            !RuleTemplatesByTool.ContainsKey(toolPrefabName) ||
+            !RuleConfigsByTool.ContainsKey(toolPrefabName) ||
             player.m_buildPieces == null)
         {
             return;
@@ -228,20 +227,19 @@ internal static class TerrainToolRangeSystem
         UpdateRangeLabel(rule, ghost, terrainOps, range);
     }
 
-    internal static PieceInfoState? PreparePieceInfo(Piece piece)
+    internal static void AppendPieceDescription(Piece? piece)
     {
         if (piece == null || !RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
         {
-            return null;
+            return;
         }
 
         ApplyCurrentCostToPiece(rule);
         if (!rule.RangeEnabled)
         {
-            return null;
+            return;
         }
 
-        PieceInfoState state = new(piece);
         float range = GetCurrentRange(rule);
         string shortcut = FormatRangeModifierShortcut();
         string rangeHint = shortcut.Length == 0
@@ -262,23 +260,6 @@ internal static class TerrainToolRangeSystem
         piece.m_description = string.IsNullOrWhiteSpace(piece.m_description)
             ? rangeInfo
             : $"{piece.m_description}\n\n{rangeInfo}";
-        return state;
-    }
-
-    internal static void RestorePieceInfo(PieceInfoState? state)
-    {
-        state?.Restore();
-    }
-
-    internal static bool ShouldSuppressCameraZoom()
-    {
-        if (!ShouldSuppressCameraZoomInput() ||
-            Mathf.Abs(ZInput.GetMouseScrollWheel()) < 0.01f)
-        {
-            return SuppressCameraZoomThisFrame;
-        }
-
-        return true;
     }
 
     internal static bool ShouldSuppressCameraZoomInput()
@@ -428,14 +409,14 @@ internal static class TerrainToolRangeSystem
 
     private static void ApplyToPieceTable(ObjectDB objectDb, ObjectDbState state, string toolPrefabName, PieceTable pieceTable)
     {
-        if (!RuleTemplatesByTool.TryGetValue(toolPrefabName, out List<TerrainToolRuleTemplate>? templates))
+        if (!RuleConfigsByTool.TryGetValue(toolPrefabName, out List<NormalizedTerrainToolConfig>? configs))
         {
             return;
         }
 
-        foreach (TerrainToolRuleTemplate template in templates)
+        foreach (NormalizedTerrainToolConfig config in configs)
         {
-            Piece? piece = FindPiece(pieceTable, template.PiecePrefabName);
+            Piece? piece = FindPiece(pieceTable, config.PiecePrefabName);
             if (piece == null)
             {
                 continue;
@@ -446,12 +427,12 @@ internal static class TerrainToolRangeSystem
                 state.OriginalCosts[piece] = CloneRequirements(piece.m_resources);
             }
 
-            Piece.Requirement[] baseRequirements = template.HasCostOverride
-                ? BuildRequirements(objectDb, template)
+            Piece.Requirement[] baseRequirements = config.HasCostOverride
+                ? BuildRequirements(objectDb, config)
                 : CloneRequirements(state.OriginalCosts[piece]);
             piece.m_resources = CloneRequirements(baseRequirements);
 
-            TerrainToolRule rule = TerrainToolRule.Create(template, piece, DetectBaseRange(piece), baseRequirements);
+            TerrainToolRule rule = TerrainToolRule.Create(config, piece, DetectBaseRange(piece), baseRequirements);
             RulesByPiece[piece] = rule;
             CurrentRanges[rule.Id] = Mathf.Clamp(CurrentRanges.TryGetValue(rule.Id, out float current) ? current : rule.DefaultRange, rule.MinRange, rule.MaxRange);
             ApplyCurrentCostToPiece(rule);
@@ -484,10 +465,11 @@ internal static class TerrainToolRangeSystem
         return null;
     }
 
-    private static Piece.Requirement[] BuildRequirements(ObjectDB objectDb, TerrainToolRuleTemplate template)
+    private static Piece.Requirement[] BuildRequirements(ObjectDB objectDb, NormalizedTerrainToolConfig config)
     {
         List<Piece.Requirement> requirements = new();
-        foreach ((string itemPrefabName, int amount) in template.Cost)
+        string configId = $"{config.ToolPrefabName}:{config.PiecePrefabName}";
+        foreach ((string itemPrefabName, int amount) in config.Cost)
         {
             if (amount <= 0)
             {
@@ -497,8 +479,8 @@ internal static class TerrainToolRangeSystem
             ItemDrop? itemDrop = objectDb.GetItemPrefab(itemPrefabName)?.GetComponent<ItemDrop>();
             if (itemDrop == null)
             {
-                WarnOnce($"missing_cost_item:{template.Id}:{itemPrefabName}",
-                    $"Terrain tool '{template.Id}' skipped cost item '{itemPrefabName}': item prefab was not found in ObjectDB.");
+                WarnOnce($"missing_cost_item:{configId}:{itemPrefabName}",
+                    $"Terrain tool '{configId}' skipped cost item '{itemPrefabName}': item prefab was not found in ObjectDB.");
                 continue;
             }
 
@@ -550,7 +532,7 @@ internal static class TerrainToolRangeSystem
     private static void ClearRuntimeState()
     {
         RulesByPiece.Clear();
-        RuleTemplatesByTool.Clear();
+        RuleConfigsByTool.Clear();
         PendingPlacementCosts.Clear();
         ActivePlacementRules.Clear();
         ActiveGridPlacementStates.Clear();
@@ -1379,7 +1361,6 @@ internal static class TerrainToolRangeSystem
         float vertexRadius = radius / Mathf.Max(0.001f, heightmap.m_scale);
         int indexRadius = Mathf.CeilToInt(vertexRadius);
         int width = heightmap.m_width + 1;
-        Vector2 vertexCenter = new(centerX, centerY);
         for (int y = centerY - indexRadius; y <= centerY + indexRadius; y++)
         {
             for (int x = centerX - indexRadius; x <= centerX + indexRadius; x++)
@@ -1389,13 +1370,9 @@ internal static class TerrainToolRangeSystem
                     continue;
                 }
 
-                if (shape == CustomRangePreviewShape.Circle)
+                if (!IsAffectedGridPoint(centerX, centerY, x, y, vertexRadius, shape, includeBoundary))
                 {
-                    float distance = Vector2.Distance(vertexCenter, new Vector2(x, y));
-                    if (includeBoundary ? distance > vertexRadius : distance >= vertexRadius)
-                    {
-                        continue;
-                    }
+                    continue;
                 }
 
                 AddCustomGridPreviewMarker(heightmap, x, y, color);
@@ -1636,7 +1613,6 @@ internal static class TerrainToolRangeSystem
         float vertexRadius = radius / Mathf.Max(0.001f, heightmap.m_scale);
         int indexRadius = Mathf.CeilToInt(vertexRadius);
         int width = heightmap.m_width + 1;
-        Vector2 vertexCenter = new(centerX, centerY);
         bool found = false;
         for (int y = centerY - indexRadius; y <= centerY + indexRadius; y++)
         {
@@ -1647,13 +1623,9 @@ internal static class TerrainToolRangeSystem
                     continue;
                 }
 
-                if (shape == CustomRangePreviewShape.Circle)
+                if (!IsAffectedGridPoint(centerX, centerY, x, y, vertexRadius, shape, includeBoundary))
                 {
-                    float distance = Vector2.Distance(vertexCenter, new Vector2(x, y));
-                    if (includeBoundary ? distance > vertexRadius : distance >= vertexRadius)
-                    {
-                        continue;
-                    }
+                    continue;
                 }
 
                 Vector3 worldPoint = heightmap.transform.TransformPoint(heightmap.CalcVertex(x, y)) + Vector3.up * yOffset;
@@ -1664,6 +1636,26 @@ internal static class TerrainToolRangeSystem
         }
 
         return found;
+    }
+
+    private static bool IsAffectedGridPoint(
+        int centerX,
+        int centerY,
+        int x,
+        int y,
+        float vertexRadius,
+        CustomRangePreviewShape shape,
+        bool includeBoundary)
+    {
+        if (shape == CustomRangePreviewShape.Square)
+        {
+            return true;
+        }
+
+        float deltaX = x - centerX;
+        float deltaY = y - centerY;
+        float distance = Mathf.Sqrt(deltaX * deltaX + deltaY * deltaY);
+        return includeBoundary ? distance <= vertexRadius : distance < vertexRadius;
     }
 
     private static Color SamplePreviewRingColor(GameObject ghost)
@@ -2060,26 +2052,6 @@ internal static class TerrainToolRangeSystem
         }
     }
 
-    internal sealed class PieceInfoState
-    {
-        private readonly Piece _piece;
-        private readonly string _description;
-
-        internal PieceInfoState(Piece piece)
-        {
-            _piece = piece;
-            _description = piece.m_description;
-        }
-
-        internal void Restore()
-        {
-            if (_piece != null)
-            {
-                _piece.m_description = _description;
-            }
-        }
-    }
-
     private sealed class ObjectDbState
     {
         internal Dictionary<Piece, Piece.Requirement[]> OriginalCosts { get; } = new();
@@ -2239,53 +2211,10 @@ internal static class TerrainToolRangeSystem
         }
     }
 
-    private sealed class TerrainToolRuleTemplate
-    {
-        internal TerrainToolRuleTemplate(NormalizedTerrainToolConfig config)
-        {
-            ToolPrefabName = config.ToolPrefabName;
-            PiecePrefabName = config.PiecePrefabName;
-            HasCostOverride = config.HasCostOverride;
-            Cost = config.Cost;
-            RangeEnabled = config.RangeEnabled;
-            MinRange = config.MinRange;
-            MaxRange = config.MaxRange;
-            DefaultRange = config.DefaultRange;
-            MaterialCostFactor = config.MaterialCostFactor;
-            StaminaCostFactor = config.StaminaCostFactor;
-            DurabilityFactor = config.DurabilityFactor;
-            Id = $"{ToolPrefabName}:{PiecePrefabName}";
-        }
-
-        internal string Id { get; }
-
-        internal string ToolPrefabName { get; }
-
-        internal string PiecePrefabName { get; }
-
-        internal bool HasCostOverride { get; }
-
-        internal IReadOnlyDictionary<string, int> Cost { get; }
-
-        internal bool RangeEnabled { get; }
-
-        internal float MinRange { get; }
-
-        internal float MaxRange { get; }
-
-        internal float DefaultRange { get; }
-
-        internal float MaterialCostFactor { get; }
-
-        internal float StaminaCostFactor { get; }
-
-        internal float DurabilityFactor { get; }
-    }
-
     private sealed class TerrainToolRule
     {
         private TerrainToolRule(
-            TerrainToolRuleTemplate template,
+            NormalizedTerrainToolConfig config,
             Piece piece,
             Piece.Requirement[] baseRequirements,
             float baseRange,
@@ -2293,24 +2222,21 @@ internal static class TerrainToolRangeSystem
             float maxRange,
             float defaultRange)
         {
-            Id = template.Id;
-            ToolPrefabName = template.ToolPrefabName;
-            PiecePrefabName = template.PiecePrefabName;
+            Id = $"{config.ToolPrefabName}:{config.PiecePrefabName}";
+            PiecePrefabName = config.PiecePrefabName;
             Piece = piece;
             BaseRequirements = baseRequirements;
-            RangeEnabled = template.RangeEnabled;
+            RangeEnabled = config.RangeEnabled;
             BaseRange = baseRange;
             MinRange = minRange;
             MaxRange = maxRange;
             DefaultRange = defaultRange;
-            MaterialCostFactor = template.MaterialCostFactor;
-            StaminaCostFactor = template.StaminaCostFactor;
-            DurabilityFactor = template.DurabilityFactor;
+            MaterialCostFactor = config.MaterialCostFactor;
+            StaminaCostFactor = config.StaminaCostFactor;
+            DurabilityFactor = config.DurabilityFactor;
         }
 
         internal string Id { get; }
-
-        internal string ToolPrefabName { get; }
 
         internal string PiecePrefabName { get; }
 
@@ -2336,25 +2262,25 @@ internal static class TerrainToolRangeSystem
 
         private float DurabilityFactor { get; }
 
-        internal static TerrainToolRule Create(TerrainToolRuleTemplate template, Piece piece, float detectedBaseRange, Piece.Requirement[] baseRequirements)
+        internal static TerrainToolRule Create(NormalizedTerrainToolConfig config, Piece piece, float detectedBaseRange, Piece.Requirement[] baseRequirements)
         {
             float baseRange = detectedBaseRange > 0.05f
                 ? detectedBaseRange
-                : template.DefaultRange > 0.05f
-                    ? template.DefaultRange
-                    : template.MinRange > 0.05f
-                        ? template.MinRange
+                : config.DefaultRange > 0.05f
+                    ? config.DefaultRange
+                    : config.MinRange > 0.05f
+                        ? config.MinRange
                         : 1f;
-            float minRange = template.MinRange > 0.05f ? template.MinRange : baseRange;
-            float maxRange = template.MaxRange > 0.05f ? template.MaxRange : Math.Max(minRange, baseRange);
+            float minRange = config.MinRange > 0.05f ? config.MinRange : baseRange;
+            float maxRange = config.MaxRange > 0.05f ? config.MaxRange : Math.Max(minRange, baseRange);
             if (maxRange < minRange)
             {
                 maxRange = minRange;
             }
 
-            float defaultRange = template.DefaultRange > 0.05f ? template.DefaultRange : baseRange;
+            float defaultRange = config.DefaultRange > 0.05f ? config.DefaultRange : baseRange;
             defaultRange = Mathf.Clamp(defaultRange, minRange, maxRange);
-            return new TerrainToolRule(template, piece, baseRequirements, baseRange, minRange, maxRange, defaultRange);
+            return new TerrainToolRule(config, piece, baseRequirements, baseRange, minRange, maxRange, defaultRange);
         }
 
         internal float GetMaterialCostMultiplier(float range)
@@ -2419,25 +2345,19 @@ internal static class TerrainOpAwakeTerrainToolRangePatch
 [HarmonyPatch(typeof(Hud), "SetupPieceInfo")]
 internal static class HudSetupPieceInfoTerrainToolRangePatch
 {
-    private static void Prefix(Piece piece, out PieceInfoPatchState __state)
+    private static void Prefix(Piece? piece, out string __state)
     {
-        __state = new PieceInfoPatchState
+        __state = piece != null ? piece.m_description : string.Empty;
+        TerrainToolRangeSystem.AppendPieceDescription(piece);
+        MassPlantingSystem.AppendPieceDescription(piece);
+    }
+
+    private static void Finalizer(Piece? piece, string __state)
+    {
+        if (piece != null)
         {
-            TerrainToolRange = TerrainToolRangeSystem.PreparePieceInfo(piece),
-            MassPlanting = MassPlantingSystem.PreparePieceInfo(piece)
-        };
-    }
-
-    private static void Finalizer(PieceInfoPatchState __state)
-    {
-        MassPlantingSystem.RestorePieceInfo(__state.MassPlanting);
-        TerrainToolRangeSystem.RestorePieceInfo(__state.TerrainToolRange);
-    }
-
-    private sealed class PieceInfoPatchState
-    {
-        internal TerrainToolRangeSystem.PieceInfoState? TerrainToolRange;
-        internal MassPlantingSystem.PieceInfoState? MassPlanting;
+            piece.m_description = __state;
+        }
     }
 }
 

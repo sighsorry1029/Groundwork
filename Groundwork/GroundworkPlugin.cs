@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -20,17 +21,16 @@ namespace Groundwork;
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.0.3";
+    internal const string ModVersion = "1.0.4";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
     private const string ZenBeehiveGuid = "ZenDragon.ZenBeehive";
     private const string TerrainToolsYamlFileName = "Groundwork.yml";
     private const string SyncedTerrainToolsYamlIdentifier = "groundwork_yaml";
-    private const long ReloadDelayTicks = TimeSpan.TicksPerSecond;
+    private const float YamlReloadDebounceSeconds = 0.35f;
 
     private static readonly string TerrainToolsYamlFilePath = Path.Combine(Paths.ConfigPath, TerrainToolsYamlFileName);
-    private static readonly object ReloadLock = new();
     private static CustomSyncedValue<string>? _syncedTerrainToolsYaml;
     private static IReadOnlyList<NormalizedTerrainToolConfig> _terrainTools = Array.Empty<NormalizedTerrainToolConfig>();
     private static bool _suppressSyncedYamlChanged;
@@ -39,7 +39,7 @@ public class GroundworkPlugin : BaseUnityPlugin
 
     private readonly Harmony _harmony = new(ModGUID);
     private FileSystemWatcher? _watcher;
-    private DateTime _lastYamlReloadTime;
+    private Coroutine? _yamlReloadCoroutine;
 
     internal static GroundworkPlugin? Instance { get; private set; }
 
@@ -141,17 +141,34 @@ public class GroundworkPlugin : BaseUnityPlugin
             return;
         }
 
-        DateTime now = DateTime.Now;
-        if (now.Ticks - _lastYamlReloadTime.Ticks < ReloadDelayTicks)
+        ScheduleLocalYamlReload();
+    }
+
+    private void ScheduleLocalYamlReload()
+    {
+        CancelPendingYamlReload();
+        _yamlReloadCoroutine = StartCoroutine(ReloadLocalYamlAfterDelay());
+    }
+
+    private IEnumerator ReloadLocalYamlAfterDelay()
+    {
+        yield return new WaitForSecondsRealtime(YamlReloadDebounceSeconds);
+        _yamlReloadCoroutine = null;
+        if (_yamlAuthorityMode == YamlAuthorityMode.LocalFiles)
+        {
+            ReloadLocalYaml();
+        }
+    }
+
+    private void CancelPendingYamlReload()
+    {
+        if (_yamlReloadCoroutine == null)
         {
             return;
         }
 
-        lock (ReloadLock)
-        {
-            ReloadLocalYaml();
-            _lastYamlReloadTime = now;
-        }
+        StopCoroutine(_yamlReloadCoroutine);
+        _yamlReloadCoroutine = null;
     }
 
     private void ReloadLocalYaml()
@@ -247,6 +264,7 @@ public class GroundworkPlugin : BaseUnityPlugin
 
     private void DisposeWatcher()
     {
+        CancelPendingYamlReload();
         if (_watcher == null)
         {
             return;
@@ -416,9 +434,5 @@ public static class ToggleExtentions
             return value == GroundworkPlugin.Toggle.On;
         }
 
-        public bool IsOff()
-        {
-            return value == GroundworkPlugin.Toggle.Off;
-        }
     }
 }

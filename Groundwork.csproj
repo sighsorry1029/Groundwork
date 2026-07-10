@@ -476,8 +476,6 @@
     <Compile Include="TerrainDigFloatingTextSystem.cs" />
     <Compile Include="KeyHintCell.cs" />
     <Compile Include="GroundworkToolsDomain.cs" />
-    <Compile Include="GroundworkNormalizedToolModels.cs" />
-    <Compile Include="GroundworkTerrainToolNormalizer.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="environment.props" />

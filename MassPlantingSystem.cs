@@ -55,6 +55,8 @@ internal static class MassPlantingSystem
     private static string? _previewSourceName;
     private static GameObject? _hiddenOriginalGhost;
     private static GameObject? _invalidOriginalGhost;
+    private static PendingPlantPlacement? _pendingPlantPlacement;
+    private static bool _reportedPlantAwakeHandoffFallback;
     private static readonly Dictionary<TextMeshProUGUI, string> OriginalHintTexts = [];
     private static readonly Dictionary<Renderer, bool> OriginalGhostRendererStates = [];
     private static readonly Dictionary<Renderer, MaterialPropertyBlock> OriginalGhostPropertyBlocks = [];
@@ -89,6 +91,14 @@ internal static class MassPlantingSystem
         internal readonly int Resources = resources;
         internal readonly int Stamina = stamina;
         internal readonly int Durability = durability;
+    }
+
+    private sealed class PendingPlantPlacement(string plantName, Vector3 position, Quaternion rotation)
+    {
+        internal readonly string PlantName = plantName;
+        internal readonly Vector3 Position = position;
+        internal readonly Quaternion Rotation = rotation;
+        internal bool Consumed;
     }
 
     private sealed class PlantPreviewGhost
@@ -279,8 +289,32 @@ internal static class MassPlantingSystem
                 Quaternion plantRotation = ResolvePlantRotation(piece, rotation, basePosition, i, randomize: wantsMassPlant);
                 ZLog.Log("Placed " + piece.gameObject.name);
                 Game.instance?.IncrementPlayerStat(PlayerStatType.Builds);
-                player.PlacePiece(piece, position, plantRotation, doAttack: placed == 0);
-                SyncPlacedPlantZdo(plant, position, plantRotation);
+                PendingPlantPlacement pendingPlacement = new(plant.m_name, position, plantRotation);
+                _pendingPlantPlacement = pendingPlacement;
+                try
+                {
+                    player.PlacePiece(piece, position, plantRotation, doAttack: placed == 0);
+                }
+                finally
+                {
+                    if (ReferenceEquals(_pendingPlantPlacement, pendingPlacement))
+                    {
+                        _pendingPlantPlacement = null;
+                    }
+                }
+
+                if (!pendingPlacement.Consumed)
+                {
+                    if (!_reportedPlantAwakeHandoffFallback)
+                    {
+                        _reportedPlantAwakeHandoffFallback = true;
+                        GroundworkPlugin.ModLogger.LogWarning(
+                            "A mass-planted crop did not consume its synchronous Plant.Awake handoff; using the physics lookup fallback.");
+                    }
+
+                    SyncPlacedPlantZdoFallback(plant, position, plantRotation);
+                }
+
                 ReservedPlantPositions.Add(position);
                 placed++;
             }
@@ -463,6 +497,7 @@ internal static class MassPlantingSystem
         if (GroundworkToolsDomain.ToggleGridPlantingHotkey.IsKeyDown())
         {
             _gridPlantingMode = !_gridPlantingMode;
+            RefreshBuildHintUi();
         }
     }
 
@@ -527,14 +562,13 @@ internal static class MassPlantingSystem
         return _suppressPlayerUpdateMouseWheel;
     }
 
-    internal static PieceInfoState? PreparePieceInfo(Piece piece)
+    internal static void AppendPieceDescription(Piece? piece)
     {
         if (piece == null || !TryGetPlant(piece, out _))
         {
-            return null;
+            return;
         }
 
-        PieceInfoState state = new(piece);
         List<string> hints = [];
         if (IsMassPlantingEnabled())
         {
@@ -546,12 +580,6 @@ internal static class MassPlantingSystem
         piece.m_description = string.IsNullOrWhiteSpace(piece.m_description)
             ? hint
             : $"{piece.m_description}\n{hint}";
-        return state;
-    }
-
-    internal static void RestorePieceInfo(PieceInfoState? state)
-    {
-        state?.Restore();
     }
 
     internal static void InitializeBuildHints(KeyHints hints)
@@ -786,7 +814,7 @@ internal static class MassPlantingSystem
         }
 
         _activePlantSelectionKey = key;
-        _selectedPlantCount = GetDefaultPlantCount();
+        _selectedPlantCount = 0;
         _activePlantGroupRight = Vector3.zero;
         _activePlantGroupForward = Vector3.zero;
         _gridPlantGroupRotated = false;
@@ -814,11 +842,6 @@ internal static class MassPlantingSystem
         {
             _selectedPlantCount = ClampPlantCountToUnlockedOptions(_selectedPlantCount, maxUnlocked);
         }
-    }
-
-    private static int GetDefaultPlantCount()
-    {
-        return 0;
     }
 
     private static int GetMaxUnlockedPlantCount(Player player)
@@ -1576,7 +1599,31 @@ internal static class MassPlantingSystem
         return true;
     }
 
-    private static void SyncPlacedPlantZdo(Plant prefabPlant, Vector3 position, Quaternion rotation)
+    internal static void TrySynchronizePendingPlant(Plant plant)
+    {
+        PendingPlantPlacement? pendingPlacement = _pendingPlantPlacement;
+        if (pendingPlacement == null ||
+            pendingPlacement.Consumed ||
+            plant == null ||
+            !string.Equals(plant.m_name, pendingPlacement.PlantName, StringComparison.Ordinal) ||
+            plant.m_nview == null ||
+            !plant.m_nview.IsValid() ||
+            !plant.m_nview.IsOwner())
+        {
+            return;
+        }
+
+        ZDO? zdo = plant.m_nview.GetZDO();
+        if (zdo == null)
+        {
+            return;
+        }
+
+        SynchronizePlacedPlant(plant, zdo, pendingPlacement.Position, pendingPlacement.Rotation);
+        pendingPlacement.Consumed = true;
+    }
+
+    private static void SyncPlacedPlantZdoFallback(Plant prefabPlant, Vector3 position, Quaternion rotation)
     {
         Physics.SyncTransforms();
 
@@ -1621,13 +1668,23 @@ internal static class MassPlantingSystem
             return;
         }
 
+        ZDO? zdo = placedPlant.m_nview.GetZDO();
+        if (zdo == null)
+        {
+            return;
+        }
+
+        SynchronizePlacedPlant(placedPlant, zdo, position, rotation);
+    }
+
+    private static void SynchronizePlacedPlant(Plant placedPlant, ZDO zdo, Vector3 position, Quaternion rotation)
+    {
         bool transformChanged =
             (placedPlant.transform.position - position).sqrMagnitude > 0.0001f ||
             Quaternion.Angle(placedPlant.transform.rotation, rotation) > 0.01f;
         placedPlant.transform.SetPositionAndRotation(position, rotation);
-        ZDO? zdo = placedPlant.m_nview.GetZDO();
-        zdo?.SetPosition(position);
-        zdo?.SetRotation(rotation);
+        zdo.SetPosition(position);
+        zdo.SetRotation(rotation);
         if (transformChanged)
         {
             Physics.SyncTransforms();
@@ -2017,25 +2074,6 @@ internal static class MassPlantingSystem
         _invalidOriginalGhost = null;
     }
 
-    internal sealed class PieceInfoState
-    {
-        private readonly Piece _piece;
-        private readonly string _description;
-
-        internal PieceInfoState(Piece piece)
-        {
-            _piece = piece;
-            _description = piece.m_description;
-        }
-
-        internal void Restore()
-        {
-            if (_piece != null)
-            {
-                _piece.m_description = _description;
-            }
-        }
-    }
 }
 
 // Harmony patches.
