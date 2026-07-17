@@ -556,10 +556,11 @@ internal static class PickableInteractForagingPickupPatch
 }
 
 [HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Awake))]
-internal static class ZNetSceneAwakeFarmingBonusEffectPatch
+internal static class ZNetSceneAwakeFarmingSystemsPatch
 {
     private static void Postfix(ZNetScene __instance)
     {
+        ScytheHarvestSystem.RefreshCultivatedPickables(__instance);
         FarmingSkillSystem.ApplyForagingBonusEffectFallbacks(__instance);
     }
 }

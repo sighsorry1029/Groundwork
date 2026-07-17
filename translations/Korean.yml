@@ -41,5 +41,8 @@ groundwork_terrain_preview_toggle_unbound: "미리보기 전환 단축키가 지
 groundwork_terrain_preview_toggle_hint: "{0}: 미리보기 전환"
 groundwork_terrain_range_label: "r: {0}m"
 groundwork_pickaxe_dig_scale: "파기 배율 {0}x"
+groundwork_pickaxe_dig_scale_tooltip: "<color=orange>{0} + Wheel</color>: 파기 배율 x1~x{1}"
+groundwork_pickaxe_dig_scale_tooltip_unbound: "<color=orange>미지정</color>: 파기 배율 x1~x{0}"
+groundwork_pickaxe_dig_scale_tooltip_note: "장착 중에는 현재 배율이 아래 키 힌트에 표시됩니다."
 groundwork_pickaxe_not_enough_resource: "{0} 부족: x{1} 지형 파기"
 groundwork_pickaxe_floating_scale: "배율: {0}"

@@ -260,6 +260,35 @@ internal static class PickaxeTerrainScalingSystem
         _lastDigHintKeyText = keyText;
     }
 
+    internal static void AppendTerrainDigTooltip(ItemDrop.ItemData? item, ref string tooltip)
+    {
+        if (!GroundworkToolsDomain.ToolHudEnabled ||
+            !TryGetTerrainDigRule(item, out TerrainDigRule rule))
+        {
+            return;
+        }
+
+        string shortcut = FormatShortcut(GroundworkToolsDomain.ToolWheelModifierHotkey);
+        string maxScale = FormatScale(rule.SelectedMaxScale);
+        string rangeHint = shortcut.Length == 0
+            ? GroundworkLocalization.Format(
+                "groundwork_pickaxe_dig_scale_tooltip_unbound",
+                "<color=orange>Unbound</color>: Dig Scale x1~x{0}",
+                maxScale)
+            : GroundworkLocalization.Format(
+                "groundwork_pickaxe_dig_scale_tooltip",
+                "<color=orange>{0} + Wheel</color>: Dig Scale x1~x{1}",
+                shortcut,
+                maxScale);
+        string keyHintNote = GroundworkLocalization.Text(
+            "groundwork_pickaxe_dig_scale_tooltip_note",
+            "Current scale is shown in the key hint below while equipped.");
+        string terrainDigTooltip = $"{rangeHint}\n{keyHintNote}";
+        tooltip = string.IsNullOrWhiteSpace(tooltip)
+            ? terrainDigTooltip
+            : $"{tooltip}\n\n{terrainDigTooltip}";
+    }
+
     private static bool TryResolvePrimaryTerrainDig(Character? character, ItemDrop.ItemData? weapon, Attack? attack)
     {
         return character != null &&
@@ -946,5 +975,21 @@ internal static class KeyHintsUpdatePickaxeTerrainScalingPatch
     private static void Postfix(KeyHints __instance)
     {
         PickaxeTerrainScalingSystem.UpdateKeyHint(__instance);
+    }
+}
+
+[HarmonyPatch(
+    typeof(ItemDrop.ItemData),
+    nameof(ItemDrop.ItemData.GetTooltip),
+    typeof(ItemDrop.ItemData),
+    typeof(int),
+    typeof(bool),
+    typeof(float),
+    typeof(int))]
+internal static class ItemDataGetTooltipPickaxeTerrainScalingPatch
+{
+    private static void Postfix(ItemDrop.ItemData item, ref string __result)
+    {
+        PickaxeTerrainScalingSystem.AppendTerrainDigTooltip(item, ref __result);
     }
 }

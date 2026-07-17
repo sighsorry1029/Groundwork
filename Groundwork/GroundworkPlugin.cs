@@ -21,7 +21,7 @@ namespace Groundwork;
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.0.4";
+    internal const string ModVersion = "1.0.5";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
@@ -316,7 +316,7 @@ public class GroundworkPlugin : BaseUnityPlugin
             TerrainToolRangeStep = plugin.config(group, "Terrain Tool Range Step", 0.5f, new ConfigDescription("Range adjustment step for terrain tool pieces configured in Groundwork.yml. Hoe/Cultivator use meters, and Pickaxe terrainDig uses scale units.", new AcceptableValueRange<float>(0.05f, 5f)), synchronizedSetting: false);
             DefaultPreviewMode = plugin.config(group, "Terrain Tool Default Preview Mode", TerrainToolRangePreviewMode.Vanilla, "Default Hoe/Cultivator terrain range preview mode. Vanilla scales the existing placement ghost visuals. Grid hides those visuals and draws the exact radius plus terrain grid candidate markers.", synchronizedSetting: false);
             TerrainToolPreviewToggleHotkey = plugin.config(group, "Terrain Tool Preview Toggle Hotkey", new KeyboardShortcut(KeyCode.G), new ConfigDescription("Local hotkey for toggling Hoe/Cultivator terrain modifying pieces between Vanilla and Grid preview while placing.", new AcceptableShortcuts()), synchronizedSetting: false);
-            ToolHud = plugin.config(group, "Tool HUD", Toggle.On, "If on, Hoe/Cultivator terrain range HUD and Pickaxe terrain dig scale HUD are shown.", synchronizedSetting: false);
+            ToolHud = plugin.config(group, "Tool HUD", Toggle.On, "If on, Hoe/Cultivator terrain range HUD, Pickaxe terrain dig scale key hint, and Pickaxe terrain dig tooltip are shown.", synchronizedSetting: false);
             PavedRoadSmoothHeight = plugin.config(group, "Paved Road Smooth Height", Toggle.On, "If on, Paved Road applies its vanilla smooth height operation. Turn off to keep only the paved paint effect.", synchronizedSetting: false);
             ToolWheelModifierHotkey = plugin.config(group, "Tool Wheel Modifier Hotkey", new KeyboardShortcut(KeyCode.LeftAlt), new ConfigDescription("Local hotkey held while using mouse wheel for Groundwork tool features, including mass planting count, Hoe/Cultivator terrain range, and pickaxe terrainDig scale.", new AcceptableShortcuts()), synchronizedSetting: false);
         }

@@ -14,6 +14,7 @@ namespace Groundwork;
 internal static class MassPlantingSystem
 {
     private const float GroupRotationStepDegrees = 15f;
+    private const float AffordableCountCacheLifetimeSeconds = 0.2f;
     private static readonly int[] MassPlantCountOptions = [5, 10, 15, 20, 25];
     private static readonly int OriginalGhostColorProperty = Shader.PropertyToID("_Color");
     private static readonly int OriginalGhostEmissionColorProperty = Shader.PropertyToID("_EmissionColor");
@@ -57,6 +58,12 @@ internal static class MassPlantingSystem
     private static GameObject? _invalidOriginalGhost;
     private static PendingPlantPlacement? _pendingPlantPlacement;
     private static bool _reportedPlantAwakeHandoffFallback;
+    private static Recipe? _requirementProbeRecipe;
+    private static Player? _affordableCountCachePlayer;
+    private static Piece? _affordableCountCachePiece;
+    private static int _affordableCountCacheWanted;
+    private static int _affordableCountCacheValue;
+    private static float _affordableCountCacheExpiresAt;
     private static readonly Dictionary<TextMeshProUGUI, string> OriginalHintTexts = [];
     private static readonly Dictionary<Renderer, bool> OriginalGhostRendererStates = [];
     private static readonly Dictionary<Renderer, MaterialPropertyBlock> OriginalGhostPropertyBlocks = [];
@@ -169,9 +176,14 @@ internal static class MassPlantingSystem
 
         private void CopyMeshRenderers(GameObject sourceGhost)
         {
-            MeshRenderer[] sourceRenderers = sourceGhost.GetComponentsInChildren<MeshRenderer>(includeInactive: true);
+            MeshRenderer[] sourceRenderers = sourceGhost.GetComponentsInChildren<MeshRenderer>(includeInactive: false);
             foreach (MeshRenderer sourceRenderer in sourceRenderers)
             {
+                if (!sourceRenderer.enabled)
+                {
+                    continue;
+                }
+
                 MeshFilter sourceFilter = sourceRenderer.GetComponent<MeshFilter>();
                 if (sourceFilter == null || sourceFilter.sharedMesh == null)
                 {
@@ -241,7 +253,7 @@ internal static class MassPlantingSystem
         }
 
         int wantedCount = wantsMassPlant ? currentPlantCount : 1;
-        PlacementCapacity capacity = ResolvePlacementCapacity(player, piece, wantedCount);
+        PlacementCapacity capacity = ResolvePlacementCapacity(player, piece, wantedCount, forceResourceRefresh: true);
         int placeLimit = capacity.Count;
         if (placeLimit <= 0)
         {
@@ -335,6 +347,7 @@ internal static class MassPlantingSystem
 
         PayExtraPlacementCosts(player, piece, placed - 1);
         RaiseExtraMassPlantSkill(player, placed - 1);
+        InvalidateAffordableCountCache();
         result = true;
         return false;
     }
@@ -396,7 +409,7 @@ internal static class MassPlantingSystem
         }
 
         int wantedCount = currentPlantCount;
-        PlacementCapacity capacity = ResolvePlacementCapacity(player, piece, wantedCount);
+        PlacementCapacity capacity = ResolvePlacementCapacity(player, piece, wantedCount, forceResourceRefresh: false);
         BuildPlantSlots(wantedCount, spacing, _gridPlantingMode);
 
         GetPlantingGroupAxes(player, ghost, _gridPlantingMode, out Vector3 right, out Vector3 forward);
@@ -1241,37 +1254,77 @@ internal static class MassPlantingSystem
     }
 
     // Placement limits, resource payment, and skill rewards.
-    private static int ResolveAffordableCount(Player player, Piece piece, int wantedCount)
+    private static int ResolveAffordableCount(Player player, Piece piece, int wantedCount, bool forceRefresh)
     {
         if (player.NoCostCheat() || ZoneSystem.instance.GetGlobalKey(piece.FreeBuildKey()))
         {
             return wantedCount;
         }
 
-        int affordable = wantedCount;
-        foreach (Piece.Requirement requirement in piece.m_resources)
+        float now = Time.unscaledTime;
+        if (!forceRefresh &&
+            ReferenceEquals(_affordableCountCachePlayer, player) &&
+            ReferenceEquals(_affordableCountCachePiece, piece) &&
+            _affordableCountCacheWanted == wantedCount &&
+            now < _affordableCountCacheExpiresAt)
         {
-            if (requirement.m_resItem == null)
-            {
-                continue;
-            }
-
-            int amount = requirement.GetAmount(0);
-            if (amount <= 0)
-            {
-                continue;
-            }
-
-            string itemName = requirement.m_resItem.m_itemData.m_shared.m_name;
-            affordable = Math.Min(affordable, player.GetInventory().CountItems(itemName) / amount);
+            return _affordableCountCacheValue;
         }
 
-        return Mathf.Clamp(affordable, 0, wantedCount);
+        // Storage mods can extend this vanilla check through Harmony without becoming a hard dependency.
+        Recipe requirementProbe = GetRequirementProbeRecipe();
+        requirementProbe.m_resources = piece.m_resources;
+        int affordable = 0;
+        int upper = Mathf.Max(0, wantedCount);
+        while (affordable < upper)
+        {
+            int candidate = affordable + (upper - affordable + 1) / 2;
+            if (player.HaveRequirementItems(requirementProbe, discover: false, qualityLevel: 0, amount: candidate))
+            {
+                affordable = candidate;
+            }
+            else
+            {
+                upper = candidate - 1;
+            }
+        }
+
+        _affordableCountCachePlayer = player;
+        _affordableCountCachePiece = piece;
+        _affordableCountCacheWanted = wantedCount;
+        _affordableCountCacheValue = affordable;
+        _affordableCountCacheExpiresAt = now + AffordableCountCacheLifetimeSeconds;
+        return affordable;
     }
 
-    private static PlacementCapacity ResolvePlacementCapacity(Player player, Piece piece, int wantedCount)
+    private static Recipe GetRequirementProbeRecipe()
     {
-        int resources = ResolveAffordableCount(player, piece, wantedCount);
+        if (_requirementProbeRecipe != null)
+        {
+            return _requirementProbeRecipe;
+        }
+
+        _requirementProbeRecipe = ScriptableObject.CreateInstance<Recipe>();
+        _requirementProbeRecipe.name = "Groundwork_MassPlantRequirementProbe";
+        _requirementProbeRecipe.hideFlags = HideFlags.HideAndDontSave;
+        _requirementProbeRecipe.m_requireOnlyOneIngredient = false;
+        return _requirementProbeRecipe;
+    }
+
+    private static void InvalidateAffordableCountCache()
+    {
+        _affordableCountCachePlayer = null;
+        _affordableCountCachePiece = null;
+        _affordableCountCacheExpiresAt = 0f;
+    }
+
+    private static PlacementCapacity ResolvePlacementCapacity(
+        Player player,
+        Piece piece,
+        int wantedCount,
+        bool forceResourceRefresh)
+    {
+        int resources = ResolveAffordableCount(player, piece, wantedCount, forceResourceRefresh);
         int stamina = ResolveStaminaCount(player, wantedCount);
         int durability = ResolveDurabilityCount(player, wantedCount);
         int count = Math.Min(wantedCount, Math.Min(resources, Math.Min(stamina, durability)));

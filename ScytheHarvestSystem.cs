@@ -8,9 +8,14 @@ namespace Groundwork;
 
 internal static class ScytheHarvestSystem
 {
-    private static readonly Collider[] HarvestHits = new Collider[200];
+    private const int MaxHarvestHitBufferSize = 2048;
+    private static Collider[] HarvestHits = new Collider[256];
     private static readonly HashSet<Pickable> SeenPickables = new();
+    private static readonly HashSet<string> CultivatedPickablePrefabNames = new(StringComparer.Ordinal);
     private static int _harvestMask;
+    private static ZNetScene? _cultivatedPickableScene;
+    private static int _cultivatedPickableScenePrefabCount = -1;
+    private static bool _reportedHarvestSearchSaturation;
 
     internal static bool ShouldOverrideVanillaHarvest(Attack attack)
     {
@@ -44,12 +49,7 @@ internal static class ScytheHarvestSystem
             attack.m_harvestRadiusMaxLevel,
             player.GetSkillFactor(Skills.SkillType.Farming));
 
-        int hitCount = Physics.OverlapSphereNonAlloc(
-            center,
-            radius,
-            HarvestHits,
-            GetHarvestMask(),
-            QueryTriggerInteraction.UseGlobal);
+        int hitCount = QueryHarvestHits(center, radius);
 
         SeenPickables.Clear();
         for (int i = 0; i < hitCount; i++)
@@ -92,9 +92,62 @@ internal static class ScytheHarvestSystem
         }
     }
 
-    private static bool CanScytheHarvest(Pickable pickable)
+    internal static bool CanScytheHarvest(Pickable? pickable)
     {
-        return pickable.m_harvestable || FarmingSkillSystem.IsForagingTarget(pickable);
+        return pickable != null &&
+               (pickable.m_harvestable ||
+               FarmingSkillSystem.IsForagingTarget(pickable) ||
+               IsCultivatedPickable(pickable));
+    }
+
+    internal static void RefreshCultivatedPickables(ZNetScene scene)
+    {
+        CultivatedPickablePrefabNames.Clear();
+        _cultivatedPickableScene = scene;
+        _cultivatedPickableScenePrefabCount = scene.m_namedPrefabs.Count;
+
+        foreach (GameObject prefab in scene.m_namedPrefabs.Values)
+        {
+            if (prefab == null)
+            {
+                continue;
+            }
+
+            foreach (Plant plant in prefab.GetComponentsInChildren<Plant>(includeInactive: true))
+            {
+                if (plant.m_grownPrefabs == null)
+                {
+                    continue;
+                }
+
+                foreach (GameObject grownPrefab in plant.m_grownPrefabs)
+                {
+                    if (grownPrefab != null && grownPrefab.GetComponentInChildren<Pickable>(includeInactive: true) != null)
+                    {
+                        CultivatedPickablePrefabNames.Add(Utils.GetPrefabName(grownPrefab));
+                    }
+                }
+            }
+        }
+    }
+
+    private static bool IsCultivatedPickable(Pickable pickable)
+    {
+        ZNetScene? scene = ZNetScene.instance;
+        if (scene == null)
+        {
+            return false;
+        }
+
+        if (_cultivatedPickableScene != scene ||
+            _cultivatedPickableScenePrefabCount != scene.m_namedPrefabs.Count)
+        {
+            RefreshCultivatedPickables(scene);
+        }
+
+        ZNetView? nview = pickable.GetComponentInParent<ZNetView>();
+        GameObject prefabRoot = nview != null ? nview.gameObject : pickable.gameObject;
+        return CultivatedPickablePrefabNames.Contains(Utils.GetPrefabName(prefabRoot));
     }
 
     private static Vector3 ResolveHarvestCenter(Attack attack)
@@ -151,10 +204,42 @@ internal static class ScytheHarvestSystem
     {
         if (_harvestMask == 0)
         {
-            _harvestMask = LayerMask.GetMask("piece", "piece_nonsolid", "item");
+            _harvestMask = LayerMask.GetMask("piece", "piece_nonsolid", "item", "Default", "Default_small");
         }
 
         return _harvestMask;
+    }
+
+    private static int QueryHarvestHits(Vector3 center, float radius)
+    {
+        while (true)
+        {
+            int hitCount = Physics.OverlapSphereNonAlloc(
+                center,
+                radius,
+                HarvestHits,
+                GetHarvestMask(),
+                QueryTriggerInteraction.UseGlobal);
+            if (hitCount < HarvestHits.Length)
+            {
+                return hitCount;
+            }
+
+            if (HarvestHits.Length >= MaxHarvestHitBufferSize)
+            {
+                if (!_reportedHarvestSearchSaturation)
+                {
+                    _reportedHarvestSearchSaturation = true;
+                    GroundworkPlugin.ModLogger.LogWarning(
+                        $"Scythe harvest search reached the {HarvestHits.Length}-collider maximum buffer capacity. " +
+                        "Results may be truncated in this unusually dense area.");
+                }
+
+                return hitCount;
+            }
+
+            Array.Resize(ref HarvestHits, Math.Min(HarvestHits.Length * 2, MaxHarvestHitBufferSize));
+        }
     }
 }
 
