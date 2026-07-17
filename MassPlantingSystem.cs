@@ -179,7 +179,7 @@ internal static class MassPlantingSystem
             MeshRenderer[] sourceRenderers = sourceGhost.GetComponentsInChildren<MeshRenderer>(includeInactive: false);
             foreach (MeshRenderer sourceRenderer in sourceRenderers)
             {
-                if (!sourceRenderer.enabled)
+                if (!IsPreviewSourceRendererVisible(sourceGhost, sourceRenderer))
                 {
                     continue;
                 }
@@ -208,6 +208,19 @@ internal static class MassPlantingSystem
                 _renderers.Add(renderer);
             }
         }
+    }
+
+    private static bool IsPreviewSourceRendererVisible(GameObject sourceGhost, Renderer sourceRenderer)
+    {
+        if (sourceRenderer.enabled)
+        {
+            return true;
+        }
+
+        // Batch preview hiding disables the source ghost after its first copies are made.
+        return _hiddenOriginalGhost == sourceGhost &&
+               OriginalGhostRendererStates.TryGetValue(sourceRenderer, out bool wasEnabled) &&
+               wasEnabled;
     }
 
     // Placement interception and preview.

@@ -21,7 +21,7 @@ namespace Groundwork;
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.0.5";
+    internal const string ModVersion = "1.0.6";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";

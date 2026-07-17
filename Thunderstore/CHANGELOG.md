@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.6
+
+- Fixed first-use mass planting previews stopping at five visible crops when cycling to 10, 15, 20, or 25 before the first placement.
+- Reused the original renderer state of Groundwork-hidden placement ghosts when expanding a batch preview, preventing partial `3+2` layouts and repeated empty preview object creation.
+
 ## 1.0.5
 
 - Expanded scythe harvesting to modded wild and cultivated pickables by recognizing additional collider layers and Plant-grown prefab relationships, with shared targeting for HarvestSweep compatibility.
