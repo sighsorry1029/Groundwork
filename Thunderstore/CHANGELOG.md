@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.7
+
+- Clarified the Farming level 20 mass planting requirement in piece tooltips and build key hints, including live Farming progress, while listing always-available grid planting first.
+
 ## 1.0.6
 
 - Fixed first-use mass planting previews stopping at five visible crops when cycling to 10, 15, 20, or 25 before the first placement.

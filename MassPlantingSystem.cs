@@ -15,6 +15,7 @@ internal static class MassPlantingSystem
 {
     private const float GroupRotationStepDegrees = 15f;
     private const float AffordableCountCacheLifetimeSeconds = 0.2f;
+    private const int FirstMassPlantingUnlockLevel = 20;
     private static readonly int[] MassPlantCountOptions = [5, 10, 15, 20, 25];
     private static readonly int OriginalGhostColorProperty = Shader.PropertyToID("_Color");
     private static readonly int OriginalGhostEmissionColorProperty = Shader.PropertyToID("_EmissionColor");
@@ -595,13 +596,24 @@ internal static class MassPlantingSystem
             return;
         }
 
-        List<string> hints = [];
+        List<string> hints =
+        [
+            $"{FormatShortcut(GroundworkToolsDomain.ToggleGridPlantingHotkey)}: {GroundworkLocalization.Text("groundwork_grid_plant", "Grid Plant")}"
+        ];
         if (IsMassPlantingEnabled())
         {
             hints.Add($"{FormatMassPlantWheelShortcut()}: {GroundworkLocalization.Text("groundwork_mass_plant", "Mass Plant")}");
+
+            if (Player.m_localPlayer is { } player && IsMassPlantingLocked(player, out int farmingLevel))
+            {
+                hints.Add(GroundworkLocalization.Format(
+                    "groundwork_mass_plant_locked",
+                    "Mass Plant locked (Farming {0}/{1})",
+                    farmingLevel,
+                    FirstMassPlantingUnlockLevel));
+            }
         }
 
-        hints.Add($"{FormatShortcut(GroundworkToolsDomain.ToggleGridPlantingHotkey)}: {GroundworkLocalization.Text("groundwork_grid_plant", "Grid Plant")}");
         string hint = string.Join("\n", hints);
         piece.m_description = string.IsNullOrWhiteSpace(piece.m_description)
             ? hint
@@ -670,7 +682,15 @@ internal static class MassPlantingSystem
 
         int count = GetCurrentPlantCount(player);
         bool massPlantingEnabled = IsMassPlantingEnabled();
-        string massState = FormatMassPlantState(count);
+        int farmingLevel = 0;
+        bool massPlantingLocked = massPlantingEnabled && IsMassPlantingLocked(player, out farmingLevel);
+        string massState = massPlantingLocked
+            ? GroundworkLocalization.Format(
+                "groundwork_mass_plant_locked_short",
+                "Locked {0}/{1}",
+                farmingLevel,
+                FirstMassPlantingUnlockLevel)
+            : FormatMassPlantState(count);
         string gridState = _gridPlantingMode
             ? GroundworkLocalization.Text("groundwork_state_on", "On")
             : GroundworkLocalization.Text("groundwork_state_off", "Off");
@@ -877,8 +897,8 @@ internal static class MassPlantingSystem
             return 0;
         }
 
-        float farmingLevel = Mathf.Clamp(player.GetSkillLevel(Skills.SkillType.Farming), 0f, 100f);
-        if (farmingLevel < 20f)
+        float farmingLevel = GetFarmingLevel(player);
+        if (farmingLevel < FirstMassPlantingUnlockLevel)
         {
             return 0;
         }
@@ -904,6 +924,18 @@ internal static class MassPlantingSystem
         }
 
         return 25;
+    }
+
+    private static bool IsMassPlantingLocked(Player player, out int farmingLevel)
+    {
+        float level = GetFarmingLevel(player);
+        farmingLevel = Mathf.FloorToInt(level);
+        return level < FirstMassPlantingUnlockLevel;
+    }
+
+    private static float GetFarmingLevel(Player player)
+    {
+        return Mathf.Clamp(player.GetSkillLevel(Skills.SkillType.Farming), 0f, 100f);
     }
 
     private static bool TryHandleMassPlantWheel(Player player)
