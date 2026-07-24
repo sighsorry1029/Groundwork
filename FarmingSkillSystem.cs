@@ -11,7 +11,6 @@ internal static class FarmingSkillSystem
     private const string ForagingPickerSkillKey = "Groundwork_ForagingPickerFarmingSkill";
     private const string PlantPlanterSkillKey = "Groundwork_PlanterFarmingSkill";
     private const string PreferredBonusEffectSourcePrefab = "Pickable_Fiddlehead";
-    private static readonly Collider[] PickupHits = new Collider[200];
     private static readonly HashSet<Pickable> SeenPickables = new();
     private static Player? _placingPlayer;
     private static bool _rangePicking;
@@ -27,6 +26,31 @@ internal static class FarmingSkillSystem
                 _suppressRangePickup--;
             }
         }
+    }
+
+    internal readonly struct PickableRespawnTiming(
+        float totalSeconds,
+        double elapsedSeconds,
+        float remainingSeconds,
+        bool modified,
+        bool hasNetworkState,
+        bool hasPickedTime)
+    {
+        internal readonly float TotalSeconds = totalSeconds;
+        internal readonly double ElapsedSeconds = elapsedSeconds;
+        internal readonly float RemainingSeconds = remainingSeconds;
+        internal readonly bool Modified = modified;
+        internal readonly bool HasNetworkState = hasNetworkState;
+        internal readonly bool HasPickedTime = hasPickedTime;
+    }
+
+    internal static void Shutdown()
+    {
+        SeenPickables.Clear();
+        _placingPlayer = null;
+        _rangePicking = false;
+        _suppressRangePickup = 0;
+        _pickupMask = 0;
     }
 
     internal static bool IsForagingTarget(Pickable? pickable)
@@ -95,10 +119,9 @@ internal static class FarmingSkillSystem
             return;
         }
 
-        int hitCount = Physics.OverlapSphereNonAlloc(
+        Collider[] pickupHits = Physics.OverlapSphere(
             source.transform.position,
             radius,
-            PickupHits,
             GetPickupMask(),
             QueryTriggerInteraction.UseGlobal);
 
@@ -107,9 +130,9 @@ internal static class FarmingSkillSystem
         SeenPickables.Add(source);
         try
         {
-            for (int i = 0; i < hitCount; i++)
+            for (int i = 0; i < pickupHits.Length; i++)
             {
-                Collider hit = PickupHits[i];
+                Collider hit = pickupHits[i];
                 if (hit == null)
                 {
                     continue;
@@ -169,81 +192,90 @@ internal static class FarmingSkillSystem
         zdo.Set(ForagingPickerSkillKey, ResolveLocalFarmingSkill());
     }
 
-    internal static bool TryGetForagingRespawnSeconds(Pickable pickable, out float respawnSeconds)
+    internal static bool TryGetPickableRespawnTiming(Pickable pickable, out PickableRespawnTiming timing)
     {
-        respawnSeconds = 0f;
+        timing = default;
         if (pickable == null)
         {
             return false;
         }
 
-        respawnSeconds = Math.Max(0f, pickable.m_respawnTimeMinutes) * 60f;
-        if (respawnSeconds <= 0f ||
-            !IsForagingTarget(pickable))
+        float respawnSeconds = Math.Max(0f, pickable.m_respawnTimeMinutes) * 60f;
+        if (respawnSeconds <= 0f)
         {
             return false;
         }
 
         bool modified = false;
-        float speed = GetForagingRespawnSpeedMultiplierForHover(pickable);
-        if (speed > 1.001f)
+        if (IsForagingTarget(pickable))
         {
-            respawnSeconds /= speed;
-            modified = true;
+            float speed = GetForagingRespawnSpeedMultiplier(pickable);
+            if (speed > 1.001f)
+            {
+                respawnSeconds /= speed;
+                modified = true;
+            }
+
+            if (BeehivePollinationSystem.TryModifyForagingRespawnSeconds(pickable, ref respawnSeconds))
+            {
+                modified = true;
+            }
+
+            if (EnvironmentEffectSystem.TryModifyForagingRespawnSeconds(pickable, ref respawnSeconds))
+            {
+                modified = true;
+            }
         }
 
-        if (BeehivePollinationSystem.TryModifyForagingRespawnSeconds(pickable, ref respawnSeconds))
+        if (!TryGetPickableZdo(pickable, requireOwner: false, out ZDO? zdo))
         {
-            modified = true;
-        }
-
-        if (EnvironmentEffectSystem.TryModifyForagingRespawnSeconds(pickable, ref respawnSeconds))
-        {
-            modified = true;
-        }
-
-        return modified;
-    }
-
-    internal static bool ShouldRunVanillaShouldRespawn(Pickable pickable, ref bool result)
-    {
-        if (!TryGetForagingRespawnSeconds(pickable, out float respawnSeconds) ||
-            !TryGetPickableZdo(pickable, requireOwner: false, out ZDO? zdo))
-        {
+            timing = new PickableRespawnTiming(
+                respawnSeconds,
+                0.0,
+                respawnSeconds,
+                modified,
+                hasNetworkState: false,
+                hasPickedTime: false);
             return true;
         }
 
         long pickedTime = zdo!.GetLong(ZDOVars.s_pickedTime, 0L);
         if (pickedTime <= 1L)
         {
-            result = PassesSpawnCheck(pickable);
-            return false;
+            timing = new PickableRespawnTiming(
+                respawnSeconds,
+                0.0,
+                respawnSeconds,
+                modified,
+                hasNetworkState: true,
+                hasPickedTime: false);
+            return true;
         }
 
         double elapsedSeconds = TimeSpan.FromTicks(Math.Max(0L, GetCurrentTicks() - pickedTime)).TotalSeconds;
-        result = elapsedSeconds > respawnSeconds && PassesSpawnCheck(pickable);
-        return false;
+        float remainingSeconds = Math.Max(0f, respawnSeconds - (float)elapsedSeconds);
+        timing = new PickableRespawnTiming(
+            respawnSeconds,
+            elapsedSeconds,
+            remainingSeconds,
+            modified,
+            hasNetworkState: true,
+            hasPickedTime: true);
+        return true;
     }
 
-    internal static void TryReplayRangePickBonusEffect(Pickable pickable, int bonus)
+    internal static bool ShouldRunVanillaShouldRespawn(Pickable pickable, ref bool result)
     {
-        if (!_rangePicking ||
-            bonus <= 0 ||
-            GroundworkToolsDomain.ForagingPickupMaxRange <= 0 ||
-            !IsForagingTarget(pickable))
+        if (!TryGetPickableRespawnTiming(pickable, out PickableRespawnTiming timing) ||
+            !timing.Modified ||
+            !timing.HasNetworkState)
         {
-            return;
+            return true;
         }
 
-        Vector3 position = pickable.transform.position;
-        if (pickable.m_bonusEffect != null && pickable.m_bonusEffect.HasEffects())
-        {
-            pickable.m_bonusEffect.Create(position, Quaternion.identity);
-        }
-        else if (pickable.m_pickEffector != null && pickable.m_pickEffector.HasEffects())
-        {
-            pickable.m_pickEffector.Create(position, Quaternion.identity);
-        }
+        result = (!timing.HasPickedTime || timing.ElapsedSeconds > timing.TotalSeconds) &&
+                 PassesSpawnCheck(pickable);
+        return false;
     }
 
     internal static void BeginPlacePiece(Player player)
@@ -296,14 +328,14 @@ internal static class FarmingSkillSystem
             return;
         }
 
-        float speed = GetPlantGrowSpeedMultiplierForHover(plant);
+        float speed = GetPlantGrowSpeedMultiplier(plant);
         if (speed > 1.001f)
         {
             growTime /= speed;
         }
     }
 
-    internal static float GetPlantGrowSpeedMultiplierForHover(Plant plant)
+    internal static float GetPlantGrowSpeedMultiplier(Plant plant)
     {
         float speedFactor = GroundworkToolsDomain.PlantGrowSpeedFactor;
         if (plant == null ||
@@ -317,7 +349,7 @@ internal static class FarmingSkillSystem
         return ResolveSkillSpeedMultiplier(speedFactor, skillFactor);
     }
 
-    internal static float GetForagingRespawnSpeedMultiplierForHover(Pickable pickable)
+    internal static float GetForagingRespawnSpeedMultiplier(Pickable pickable)
     {
         float speedFactor = GroundworkToolsDomain.ForagingRespawnSpeedFactor;
         if (pickable == null ||
@@ -555,23 +587,12 @@ internal static class PickableInteractForagingPickupPatch
     }
 }
 
-[HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Awake))]
-internal static class ZNetSceneAwakeFarmingSystemsPatch
-{
-    private static void Postfix(ZNetScene __instance)
-    {
-        ScytheHarvestSystem.RefreshCultivatedPickables(__instance);
-        FarmingSkillSystem.ApplyForagingBonusEffectFallbacks(__instance);
-    }
-}
-
 [HarmonyPatch(typeof(Pickable), "RPC_Pick")]
 internal static class PickableRpcPickForagingSkillPatch
 {
-    private static void Prefix(Pickable __instance, long sender, int bonus)
+    private static void Prefix(Pickable __instance, long sender)
     {
         FarmingSkillSystem.RememberForagingPickerSkill(__instance, sender);
-        FarmingSkillSystem.TryReplayRangePickBonusEffect(__instance, bonus);
     }
 }
 
@@ -590,33 +611,6 @@ internal static class PickableShouldRespawnForagingPatch
     private static bool Prefix(Pickable __instance, ref bool __result)
     {
         return FarmingSkillSystem.ShouldRunVanillaShouldRespawn(__instance, ref __result);
-    }
-}
-
-[HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
-internal static class PlayerPlacePieceFarmingTrackingPatch
-{
-    private static void Prefix(Player __instance, Piece piece)
-    {
-        FarmingSkillSystem.BeginPlacePiece(__instance);
-        BeehivePollinationSystem.BeginPlacePiece(__instance, piece);
-    }
-
-    private static void Finalizer()
-    {
-        FarmingSkillSystem.EndPlacePiece();
-        BeehivePollinationSystem.EndPlacePiece();
-    }
-}
-
-[HarmonyPatch(typeof(Plant), nameof(Plant.Awake))]
-internal static class PlantAwakeGroundworkPatch
-{
-    private static void Postfix(Plant __instance)
-    {
-        MassPlantingSystem.TrySynchronizePendingPlant(__instance);
-        BeehivePollinationSystem.TrackLoadedTarget(__instance);
-        FarmingSkillSystem.TryStorePlanterSkill(__instance);
     }
 }
 

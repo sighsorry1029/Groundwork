@@ -19,7 +19,7 @@ Scythe harvesting for all supported crops. Sweep through planted fields and harv
 Beehive upgrades and hover details. Farming-scaled honey capacity, cover, pollination, night/rain modifiers, total honey rate, and next honey timing are shown at a glance.
 
 ![](https://i.ibb.co/zHfv96hg/Screenshot-2026-06-16-020315.png) <br>
-Rain and pollination plant growth info. Hover text shows active Farming, pollination, and rain multipliers, remaining growth time, and total growth speed.
+Rain and pollination plant growth info. Hover text shows active Farming, pollination, and rain multipliers alongside the remaining growth time.
 
 ![](https://i.ibb.co/ycJdxWfq/Screenshot-2026-06-16-020330.png) <br>
 Farming-scaled mass planting, grid planting, and foraging pollination. Plant in clean grids, scale planting count by Farming level, and let beehives boost nearby foraging respawn when conditions are right.

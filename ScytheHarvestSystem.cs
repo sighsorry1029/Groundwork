@@ -11,6 +11,7 @@ internal static class ScytheHarvestSystem
     private const int MaxHarvestHitBufferSize = 2048;
     private static Collider[] HarvestHits = new Collider[256];
     private static readonly HashSet<Pickable> SeenPickables = new();
+    private static readonly HashSet<Destructible> SeenDestructibles = new();
     private static readonly HashSet<string> CultivatedPickablePrefabNames = new(StringComparer.Ordinal);
     private static int _harvestMask;
     private static ZNetScene? _cultivatedPickableScene;
@@ -52,29 +53,42 @@ internal static class ScytheHarvestSystem
         int hitCount = QueryHarvestHits(center, radius);
 
         SeenPickables.Clear();
-        for (int i = 0; i < hitCount; i++)
+        SeenDestructibles.Clear();
+        try
         {
-            Collider hit = HarvestHits[i];
-            if (hit == null)
+            using (FarmingSkillSystem.SuppressRangePickup())
             {
-                continue;
-            }
+                for (int i = 0; i < hitCount; i++)
+                {
+                    Collider hit = HarvestHits[i];
+                    if (hit == null)
+                    {
+                        continue;
+                    }
 
-            Pickable? pickable = hit.GetComponentInParent<Pickable>();
-            if (pickable != null)
-            {
-                TryHarvestPickable(player, pickable);
-                continue;
-            }
+                    Pickable? pickable = hit.GetComponentInParent<Pickable>();
+                    if (pickable != null)
+                    {
+                        TryHarvestPickable(player, pickable);
+                        continue;
+                    }
 
-            Plant? plant = hit.GetComponentInParent<Plant>();
-            if (plant != null && plant.GetStatus() != Plant.Status.Healthy)
-            {
-                hit.GetComponentInParent<Destructible>()?.Destroy();
+                    Plant? plant = hit.GetComponentInParent<Plant>();
+                    Destructible? destructible = plant != null && plant.GetStatus() != Plant.Status.Healthy
+                        ? hit.GetComponentInParent<Destructible>()
+                        : null;
+                    if (destructible != null && SeenDestructibles.Add(destructible))
+                    {
+                        destructible.Destroy();
+                    }
+                }
             }
         }
-
-        SeenPickables.Clear();
+        finally
+        {
+            SeenPickables.Clear();
+            SeenDestructibles.Clear();
+        }
     }
 
     private static void TryHarvestPickable(Player player, Pickable pickable)
@@ -86,10 +100,7 @@ internal static class ScytheHarvestSystem
             return;
         }
 
-        using (FarmingSkillSystem.SuppressRangePickup())
-        {
-            pickable.Interact(player, repeat: false, alt: false);
-        }
+        pickable.Interact(player, repeat: false, alt: false);
     }
 
     internal static bool CanScytheHarvest(Pickable? pickable)
@@ -129,6 +140,19 @@ internal static class ScytheHarvestSystem
                 }
             }
         }
+    }
+
+    internal static void Shutdown()
+    {
+        SeenPickables.Clear();
+        SeenDestructibles.Clear();
+        CultivatedPickablePrefabNames.Clear();
+        Array.Clear(HarvestHits, 0, HarvestHits.Length);
+        HarvestHits = new Collider[256];
+        _cultivatedPickableScene = null;
+        _cultivatedPickableScenePrefabCount = -1;
+        _harvestMask = 0;
+        _reportedHarvestSearchSaturation = false;
     }
 
     private static bool IsCultivatedPickable(Pickable pickable)

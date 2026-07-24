@@ -59,6 +59,12 @@ internal static class ZenBeehiveCompatSystem
         _lastHoneyLevel = currentHoneyLevel;
     }
 
+    internal static void Shutdown()
+    {
+        _openBeehive = null;
+        _lastHoneyLevel = 0;
+    }
+
     internal static void RefreshContainerAmountText(InventoryGrid? grid)
     {
         Beehive? beehive = _openBeehive;
@@ -114,6 +120,16 @@ internal static class InventoryGuiShowZenBeehiveCompatPatch
 [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.Hide))]
 [HarmonyAfter(ZenBeehiveCompatSystem.ZenBeehiveGuid)]
 internal static class InventoryGuiHideZenBeehiveCompatPatch
+{
+    private static void Postfix()
+    {
+        ZenBeehiveCompatSystem.EndBeehiveContainer();
+    }
+}
+
+[HarmonyPatch(typeof(InventoryGui), "CloseContainer")]
+[HarmonyAfter(ZenBeehiveCompatSystem.ZenBeehiveGuid)]
+internal static class InventoryGuiCloseContainerZenBeehiveCompatPatch
 {
     private static void Postfix()
     {

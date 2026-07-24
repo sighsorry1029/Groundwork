@@ -12,9 +12,11 @@
     <AssemblyName>Groundwork</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
-    <LangVersion>preview</LangVersion>
+    <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <RuntimeIdentifiers>win</RuntimeIdentifiers>
+    <!-- Keep normal builds isolated from the live game install. Opt in with -p:DeployLocal=true. -->
+    <DeployLocal Condition="'$(DeployLocal)' == ''">false</DeployLocal>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -539,10 +541,10 @@
     </PropertyGroup>
   </Target>
   <Target Name="CopyOutputDLL" AfterTargets="GetAssemblyVersion">
-    <Error Text="DLL not found in target directory." Condition="!Exists('$(TargetDir)$(AssemblyName).dll')" />
-    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath)" OverwriteReadOnlyFiles="true" />
-    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath2)" OverwriteReadOnlyFiles="true" Condition="Exists('$(CopyOutputDLLPath2)')" />
-    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath3)" OverwriteReadOnlyFiles="true" Condition="Exists('$(CopyOutputDLLPath3)')" />
+    <Error Text="DLL not found in target directory." Condition="'$(DeployLocal)' == 'true' And !Exists('$(TargetDir)$(AssemblyName).dll')" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath)" OverwriteReadOnlyFiles="true" Condition="'$(DeployLocal)' == 'true' And '$(CopyOutputDLLPath)' != ''" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath2)" OverwriteReadOnlyFiles="true" Condition="'$(DeployLocal)' == 'true' And Exists('$(CopyOutputDLLPath2)')" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath3)" OverwriteReadOnlyFiles="true" Condition="'$(DeployLocal)' == 'true' And Exists('$(CopyOutputDLLPath3)')" />
   </Target>
   <Target Name="CopyReadMeToTSFolder" AfterTargets="CopyOutputDLL" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') And Exists('$(ProjectDir)Thunderstore\manifest.json') ">
     <Error Text="README.md not found in project directory." Condition="!Exists('$(ProjectDir)README.md')" />

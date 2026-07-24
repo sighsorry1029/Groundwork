@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
@@ -9,10 +10,11 @@ namespace Groundwork;
 internal static class ScytheToolCompatSystem
 {
     private const string JewelcraftingAssemblyName = "Jewelcrafting";
+    private static readonly Dictionary<ItemDrop.ItemData.SharedData, ItemDrop.ItemData.ItemType> OriginalItemTypes = new();
     private static bool _loggedJewelcraftingRecalcFailure;
     private static bool _pendingJewelcraftingRecalc;
 
-    internal static void ApplyToObjectDb(ObjectDB objectDb)
+    internal static bool ApplyToObjectDb(ObjectDB objectDb)
     {
         int changedCount = 0;
         foreach (GameObject itemPrefab in objectDb.m_items)
@@ -30,6 +32,7 @@ internal static class ScytheToolCompatSystem
                 continue;
             }
 
+            OriginalItemTypes.TryAdd(sharedData, sharedData.m_itemType);
             sharedData.m_itemType = ItemDrop.ItemData.ItemType.Tool;
             changedCount++;
         }
@@ -38,6 +41,8 @@ internal static class ScytheToolCompatSystem
         {
             GroundworkPlugin.ModLogger.LogInfo($"Treated {changedCount} scythe/Farming item prefab(s) as ItemType.Tool.");
         }
+
+        return changedCount > 0;
     }
 
     internal static bool ShouldCountAsWeapon(ItemDrop.ItemData? item)
@@ -67,18 +72,20 @@ internal static class ScytheToolCompatSystem
 
         try
         {
-            InvokeJewelcraftingEffectRecalc(jewelcraftingAssembly, player);
+            if (!InvokeJewelcraftingEffectRecalc(jewelcraftingAssembly, player))
+            {
+                _pendingJewelcraftingRecalc = false;
+                LogJewelcraftingRecalcFailure(
+                    "no supported effect recalculation entry point was found");
+                return;
+            }
+
             _pendingJewelcraftingRecalc = false;
         }
         catch (Exception ex)
         {
-            if (_loggedJewelcraftingRecalcFailure)
-            {
-                return;
-            }
-
-            _loggedJewelcraftingRecalcFailure = true;
-            GroundworkPlugin.ModLogger.LogWarning($"Could not notify Jewelcrafting to recalculate gem effects: {ex.GetBaseException().Message}");
+            _pendingJewelcraftingRecalc = false;
+            LogJewelcraftingRecalcFailure(ex.GetBaseException().Message);
         }
     }
 
@@ -95,26 +102,73 @@ internal static class ScytheToolCompatSystem
     private static bool TryGetReadyLocalPlayer(out Player player)
     {
         player = Player.m_localPlayer;
-        return player != null && ((Character)player).m_nview != null;
+        ZNetView? nview = player != null ? ((Character)player).m_nview : null;
+        return player != null && nview != null && nview.IsValid();
     }
 
-    private static void InvokeJewelcraftingEffectRecalc(Assembly jewelcraftingAssembly, Player player)
+    private static bool InvokeJewelcraftingEffectRecalc(Assembly jewelcraftingAssembly, Player player)
     {
         Type? trackerType = jewelcraftingAssembly.GetType("Jewelcrafting.GemEffects.TrackEquipmentChanges");
         MethodInfo? calculateEffectsMethod = trackerType?.GetMethod(
             "CalculateEffects",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(Player)],
+            modifiers: null);
         if (calculateEffectsMethod != null)
         {
             calculateEffectsMethod.Invoke(null, new object[] { player });
-            return;
+            return true;
         }
 
         Type? apiType = jewelcraftingAssembly.GetType("Jewelcrafting.API");
         MethodInfo? recalcMethod = apiType?.GetMethod(
             "InvokeEffectRecalc",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-        recalcMethod?.Invoke(null, null);
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            types: Type.EmptyTypes,
+            modifiers: null);
+        if (recalcMethod == null)
+        {
+            return false;
+        }
+
+        recalcMethod.Invoke(null, null);
+        return true;
+    }
+
+    internal static void Shutdown()
+    {
+        int restoredCount = 0;
+        foreach (KeyValuePair<ItemDrop.ItemData.SharedData, ItemDrop.ItemData.ItemType> state in OriginalItemTypes)
+        {
+            if (state.Key != null && state.Key.m_itemType == ItemDrop.ItemData.ItemType.Tool)
+            {
+                state.Key.m_itemType = state.Value;
+                restoredCount++;
+            }
+        }
+
+        OriginalItemTypes.Clear();
+        if (restoredCount > 0)
+        {
+            NotifyJewelcraftingEffectRecalcIfPresent();
+        }
+
+        _pendingJewelcraftingRecalc = false;
+        _loggedJewelcraftingRecalcFailure = false;
+    }
+
+    private static void LogJewelcraftingRecalcFailure(string reason)
+    {
+        if (_loggedJewelcraftingRecalcFailure)
+        {
+            return;
+        }
+
+        _loggedJewelcraftingRecalcFailure = true;
+        GroundworkPlugin.ModLogger.LogWarning(
+            $"Could not notify Jewelcrafting to recalculate gem effects: {reason}.");
     }
 
     private static bool IsScytheLike(ItemDrop.ItemData.SharedData? sharedData)

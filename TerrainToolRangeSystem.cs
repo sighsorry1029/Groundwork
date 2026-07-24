@@ -37,13 +37,14 @@ internal static class TerrainToolRangeSystem
     private static readonly Dictionary<string, List<NormalizedTerrainToolConfig>> RuleConfigsByTool = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, float> CurrentRanges = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<Player, PendingPlacementCost> PendingPlacementCosts = new();
-    private static readonly Dictionary<Player, TerrainToolRule> ActivePlacementRules = new();
+    private static readonly Dictionary<Player, ActivePlacementContext> ActivePlacements = new();
     private static readonly Dictionary<Player, ActiveGridPlacementState> ActiveGridPlacementStates = new();
     private static readonly HashSet<string> ReportedWarnings = new(StringComparer.OrdinalIgnoreCase);
     private static TerrainToolRule? ActiveRangeRule;
     private static GroundworkPlugin.TerrainToolRangePreviewMode? ActivePreviewMode;
     private static GameObject? CachedTerrainOpsGhost;
     private static TerrainOp[] CachedTerrainOps = Array.Empty<TerrainOp>();
+    private static readonly List<TerrainOpSettingsState> CachedTerrainOpSettingsStates = [];
     private static readonly HashSet<string> AimHeightHintPiecePrefabNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "mud_road_v2",
@@ -77,6 +78,33 @@ internal static class TerrainToolRangeSystem
     private static TextMeshProUGUI? RangeLabelText;
 
     // ObjectDB rule setup and restoration.
+    internal static void Shutdown()
+    {
+        try
+        {
+            ObjectDB? objectDb = ObjectDB.instance;
+            if (objectDb != null && ObjectDbStates.TryGetValue(objectDb, out ObjectDbState? state))
+            {
+                try
+                {
+                    RestoreOriginalCosts(state);
+                }
+                finally
+                {
+                    ObjectDbStates.Remove(objectDb);
+                }
+            }
+        }
+        finally
+        {
+            ClearRuntimeState();
+            CurrentRanges.Clear();
+            ReportedWarnings.Clear();
+            SuppressCameraZoomThisFrame = false;
+            DestroyRuntimeObjects();
+        }
+    }
+
     internal static void RestoreObjectDb(ObjectDB objectDb)
     {
         if (objectDb == null)
@@ -97,7 +125,6 @@ internal static class TerrainToolRangeSystem
         }
 
         ObjectDbState state = ObjectDbStates.GetValue(objectDb, _ => new ObjectDbState());
-        ClearRuntimeState();
 
         if (configs.Count == 0)
         {
@@ -153,14 +180,14 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
+        CleanupExpiredPendingCosts();
+
         if (!player.InPlaceMode() || !TryGetSelectedRule(player, out TerrainToolRule rule))
         {
             ClearActiveRangeRule();
             ClearRangePreview();
             return;
         }
-
-        CleanupExpiredPendingCosts();
 
         if (!rule.RangeEnabled)
         {
@@ -211,6 +238,7 @@ internal static class TerrainToolRangeSystem
 
         GameObject ghost = player.m_placementGhost;
         TerrainOp[] terrainOps = GetCachedTerrainOps(ghost);
+        RestoreCachedTerrainOpSettings();
         float range = GetCurrentRange(rule);
         ApplyRangeToTerrainOps(terrainOps, range, rule);
         if (IsGridRangePreviewEnabled())
@@ -224,7 +252,7 @@ internal static class TerrainToolRangeSystem
             ApplyRangeToGhostVisual(ghost, rule, range);
         }
 
-        UpdateRangeLabel(rule, ghost, terrainOps, range);
+        UpdateRangeLabel(ghost, terrainOps, range);
     }
 
     internal static void AppendPieceDescription(Piece? piece)
@@ -277,12 +305,19 @@ internal static class TerrainToolRangeSystem
 
     internal static void BeginTryPlacePiece(Player player, Piece piece)
     {
-        if (player == null || piece == null || !RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
+        if (player == null)
         {
             return;
         }
 
-        ActivePlacementRules[player] = rule;
+        ActivePlacements.Remove(player);
+        ActiveGridPlacementStates.Remove(player);
+        if (piece == null || !RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
+        {
+            return;
+        }
+
+        ActivePlacements[player] = new ActivePlacementContext(rule, player.GetRightItem());
         if (TryCreateActiveGridPlacementState(rule, out ActiveGridPlacementState? gridPlacementState))
         {
             ActiveGridPlacementStates[player] = gridPlacementState;
@@ -300,25 +335,30 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
-        if (placed && piece != null && RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
+        if (placed && ActivePlacements.TryGetValue(player, out ActivePlacementContext placement))
         {
-            PendingPlacementCosts[player] = new PendingPlacementCost(rule, GetCurrentRange(rule), Time.frameCount);
+            PendingPlacementCosts[player] = new PendingPlacementCost(
+                placement.Rule,
+                GetCurrentRange(placement.Rule),
+                Time.frameCount,
+                placement.ExpectedTool);
             InvalidateCustomGridPreview();
         }
 
-        ActivePlacementRules.Remove(player);
+        ActivePlacements.Remove(player);
         ActiveGridPlacementStates.Remove(player);
     }
 
     internal static TerrainOpSettingsState? PrepareTerrainOp(TerrainOp terrainOp)
     {
         if (terrainOp == null || Player.m_localPlayer == null ||
-            !ActivePlacementRules.TryGetValue(Player.m_localPlayer, out TerrainToolRule rule) ||
-            !rule.RangeEnabled)
+            !ActivePlacements.TryGetValue(Player.m_localPlayer, out ActivePlacementContext placement) ||
+            !placement.Rule.RangeEnabled)
         {
             return null;
         }
 
+        TerrainToolRule rule = placement.Rule;
         TerrainOpSettingsState state = TerrainOpSettingsState.Capture(terrainOp.m_settings);
         ApplyTerrainOpOverrides(terrainOp.m_settings, rule);
         ApplyRangeToSettings(terrainOp.m_settings, GetCurrentRange(rule));
@@ -384,27 +424,28 @@ internal static class TerrainToolRangeSystem
     internal static void ApplyDynamicBuildStamina(Player player, ref float stamina)
     {
         if (player == null ||
-            !PendingPlacementCosts.TryGetValue(player, out PendingPlacementCost pendingCost) ||
-            !pendingCost.IsCurrentFrame)
+            !TryGetCurrentPendingPlacementCost(player, out PendingPlacementCost? pendingCost) ||
+            !pendingCost.TryConsumeStamina(out float multiplier))
         {
             return;
         }
 
-        stamina *= pendingCost.Rule.GetStaminaCostMultiplier(pendingCost.Range);
+        stamina *= multiplier;
+        RemoveCompletedPendingPlacementCost(player, pendingCost);
     }
 
     internal static void ApplyDynamicPlaceDurability(Player player, ItemDrop.ItemData tool, ref float durability)
     {
         if (player == null ||
             tool == null ||
-            !PendingPlacementCosts.TryGetValue(player, out PendingPlacementCost pendingCost) ||
-            !pendingCost.IsCurrentFrame)
+            !TryGetCurrentPendingPlacementCost(player, out PendingPlacementCost? pendingCost) ||
+            !pendingCost.TryConsumeDurability(tool, out float multiplier))
         {
             return;
         }
 
-        durability *= pendingCost.Rule.GetDurabilityMultiplier(pendingCost.Range);
-        PendingPlacementCosts.Remove(player);
+        durability *= multiplier;
+        RemoveCompletedPendingPlacementCost(player, pendingCost);
     }
 
     private static void ApplyToPieceTable(ObjectDB objectDb, ObjectDbState state, string toolPrefabName, PieceTable pieceTable)
@@ -434,7 +475,11 @@ internal static class TerrainToolRangeSystem
 
             TerrainToolRule rule = TerrainToolRule.Create(config, piece, DetectBaseRange(piece), baseRequirements);
             RulesByPiece[piece] = rule;
-            CurrentRanges[rule.Id] = Mathf.Clamp(CurrentRanges.TryGetValue(rule.Id, out float current) ? current : rule.DefaultRange, rule.MinRange, rule.MaxRange);
+            if (CurrentRanges.TryGetValue(rule.Id, out float current))
+            {
+                CurrentRanges[rule.Id] = Mathf.Clamp(current, rule.MinRange, rule.MaxRange);
+            }
+
             ApplyCurrentCostToPiece(rule);
         }
     }
@@ -534,12 +579,60 @@ internal static class TerrainToolRangeSystem
         RulesByPiece.Clear();
         RuleConfigsByTool.Clear();
         PendingPlacementCosts.Clear();
-        ActivePlacementRules.Clear();
+        ActivePlacements.Clear();
         ActiveGridPlacementStates.Clear();
         LastGridPreviewState = null;
         ActiveRangeRule = null;
         ActivePreviewMode = null;
         ClearRangePreview();
+    }
+
+    private static void DestroyRuntimeObjects()
+    {
+        if (CustomRangePreviewObject != null)
+        {
+            UnityEngine.Object.Destroy(CustomRangePreviewObject);
+        }
+
+        if (CustomGridPreviewObject != null)
+        {
+            UnityEngine.Object.Destroy(CustomGridPreviewObject);
+        }
+
+        if (RangeLabelObject != null)
+        {
+            UnityEngine.Object.Destroy(RangeLabelObject);
+        }
+
+        if (CustomGridPreviewMesh != null)
+        {
+            UnityEngine.Object.Destroy(CustomGridPreviewMesh);
+        }
+
+        if (CustomRangePreviewMaterial != null)
+        {
+            UnityEngine.Object.Destroy(CustomRangePreviewMaterial);
+        }
+
+        CustomRangePreviewObject = null;
+        CustomRangePreviewLine = null;
+        CustomRangePreviewMaterial = null;
+        CustomGridPreviewObject = null;
+        CustomGridPreviewMeshFilter = null;
+        CustomGridPreviewRenderer = null;
+        CustomGridPreviewMesh = null;
+        CustomRangePreviewGhost = null;
+        CustomRangePreviewColor = FallbackPreviewRingColor;
+        CustomGridPreviewSignature = 0;
+        CustomGridPreviewSignatureValid = false;
+        LastGridPreviewState = null;
+        RangeLabelObject = null;
+        RangeLabelText = null;
+        CustomRangePreviewHeightmaps.Clear();
+        CustomGridPreviewHeightmaps.Clear();
+        CustomGridPreviewVertices.Clear();
+        CustomGridPreviewIndices.Clear();
+        CustomGridPreviewColors.Clear();
     }
 
     private static void RestoreOriginalCosts(ObjectDbState state)
@@ -625,7 +718,7 @@ internal static class TerrainToolRangeSystem
 
     private static void ResetCurrentRangeToDefault(TerrainToolRule rule)
     {
-        CurrentRanges[rule.Id] = rule.VanillaRange;
+        CurrentRanges.Remove(rule.Id);
         ApplyCurrentCostToPiece(rule);
     }
 
@@ -700,16 +793,36 @@ internal static class TerrainToolRangeSystem
             return CachedTerrainOps;
         }
 
+        ClearCachedTerrainOps();
         CachedTerrainOpsGhost = ghost;
         CachedTerrainOps = ghost.GetComponentsInChildren<TerrainOp>(includeInactive: true);
+        CachedTerrainOpSettingsStates.Clear();
+        foreach (TerrainOp terrainOp in CachedTerrainOps)
+        {
+            if (terrainOp?.m_settings != null)
+            {
+                CachedTerrainOpSettingsStates.Add(TerrainOpSettingsState.Capture(terrainOp.m_settings));
+            }
+        }
+
         InvalidateCustomGridPreview();
         return CachedTerrainOps;
     }
 
     private static void ClearCachedTerrainOps()
     {
+        RestoreCachedTerrainOpSettings();
         CachedTerrainOpsGhost = null;
         CachedTerrainOps = Array.Empty<TerrainOp>();
+        CachedTerrainOpSettingsStates.Clear();
+    }
+
+    private static void RestoreCachedTerrainOpSettings()
+    {
+        foreach (TerrainOpSettingsState state in CachedTerrainOpSettingsStates)
+        {
+            state.Restore();
+        }
     }
 
     private static void ApplyTerrainOpOverrides(TerrainOp.Settings settings, TerrainToolRule rule)
@@ -1210,7 +1323,7 @@ internal static class TerrainToolRangeSystem
         if (ghost == null ||
             rule == null ||
             Player.m_localPlayer == null ||
-            ActivePlacementRules.ContainsKey(Player.m_localPlayer))
+            ActivePlacements.ContainsKey(Player.m_localPlayer))
         {
             return;
         }
@@ -1359,17 +1472,13 @@ internal static class TerrainToolRangeSystem
         Color color)
     {
         float vertexRadius = radius / Mathf.Max(0.001f, heightmap.m_scale);
-        int indexRadius = Mathf.CeilToInt(vertexRadius);
         int width = heightmap.m_width + 1;
-        for (int y = centerY - indexRadius; y <= centerY + indexRadius; y++)
+        GetClampedGridPreviewIndexRange(centerX, vertexRadius, width, out int minX, out int maxX);
+        GetClampedGridPreviewIndexRange(centerY, vertexRadius, width, out int minY, out int maxY);
+        for (int y = minY; y <= maxY; y++)
         {
-            for (int x = centerX - indexRadius; x <= centerX + indexRadius; x++)
+            for (int x = minX; x <= maxX; x++)
             {
-                if (x < 0 || y < 0 || x >= width || y >= width)
-                {
-                    continue;
-                }
-
                 if (!IsAffectedGridPoint(centerX, centerY, x, y, vertexRadius, shape, includeBoundary))
                 {
                     continue;
@@ -1387,6 +1496,27 @@ internal static class TerrainToolRangeSystem
                 break;
             }
         }
+    }
+
+    private static void GetClampedGridPreviewIndexRange(
+        int centerIndex,
+        float vertexRadius,
+        int width,
+        out int minIndex,
+        out int maxIndex)
+    {
+        if (width <= 0 || float.IsNaN(vertexRadius))
+        {
+            minIndex = 0;
+            maxIndex = -1;
+            return;
+        }
+
+        double indexRadius = Math.Ceiling(Math.Max(0d, vertexRadius));
+        double lower = centerIndex - indexRadius;
+        double upper = centerIndex + indexRadius;
+        minIndex = lower <= 0d ? 0 : lower >= width ? width : (int)lower;
+        maxIndex = upper < 0d ? -1 : upper >= width - 1d ? width - 1 : (int)upper;
     }
 
     private static void AddCustomGridPreviewMarker(Heightmap heightmap, int x, int y, Color color)
@@ -1571,6 +1701,7 @@ internal static class TerrainToolRangeSystem
         Heightmap.FindHeightmap(center, radius + 1f, CustomRangePreviewHeightmaps);
 
         bool found = false;
+        int remainingTraversalBudget = CustomGridPreviewMaxMarkers;
         Vector3 min = new(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
         Vector3 max = new(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
         foreach (Heightmap heightmap in CustomRangePreviewHeightmaps)
@@ -1581,17 +1712,47 @@ internal static class TerrainToolRangeSystem
             }
 
             Vector3 gridCenter = center;
+            int operationCenterX;
+            int operationCenterY;
+            CustomRangePreviewShape operationShape;
             if (usePaintGrid)
             {
                 gridCenter.x -= 0.5f;
                 gridCenter.z -= 0.5f;
-                heightmap.WorldToVertexMask(gridCenter, out int paintCenterX, out int paintCenterY);
-                found |= AccumulateAffectedGridPreviewBounds(heightmap, paintCenterX, paintCenterY, radius, CustomRangePreviewShape.Circle, includeBoundary, yOffset, ref min, ref max);
+                heightmap.WorldToVertexMask(gridCenter, out operationCenterX, out operationCenterY);
+                operationShape = CustomRangePreviewShape.Circle;
             }
             else
             {
-                heightmap.WorldToVertex(gridCenter, out int centerX, out int centerY);
-                found |= AccumulateAffectedGridPreviewBounds(heightmap, centerX, centerY, radius, shape, includeBoundary, yOffset, ref min, ref max);
+                heightmap.WorldToVertex(gridCenter, out operationCenterX, out operationCenterY);
+                operationShape = shape;
+            }
+
+            found |= AccumulateAffectedGridPreviewBounds(
+                heightmap,
+                operationCenterX,
+                operationCenterY,
+                radius,
+                operationShape,
+                includeBoundary,
+                yOffset,
+                ref remainingTraversalBudget,
+                out bool limitExceeded,
+                ref min,
+                ref max);
+            if (limitExceeded)
+            {
+                WarnOnce(
+                    "grid_preview_bounds_limit",
+                    $"Terrain grid preview bounds exceeded the {CustomGridPreviewMaxMarkers}-point safety limit. " +
+                    "The preview center is using the operation center fallback.");
+                worldPoint = center + Vector3.up * yOffset;
+                if (Heightmap.GetHeight(center, out float centerHeight))
+                {
+                    worldPoint.y = centerHeight + yOffset;
+                }
+
+                return true;
             }
         }
 
@@ -1607,22 +1768,28 @@ internal static class TerrainToolRangeSystem
         CustomRangePreviewShape shape,
         bool includeBoundary,
         float yOffset,
+        ref int remainingTraversalBudget,
+        out bool limitExceeded,
         ref Vector3 min,
         ref Vector3 max)
     {
+        limitExceeded = false;
         float vertexRadius = radius / Mathf.Max(0.001f, heightmap.m_scale);
-        int indexRadius = Mathf.CeilToInt(vertexRadius);
         int width = heightmap.m_width + 1;
+        GetClampedGridPreviewIndexRange(centerX, vertexRadius, width, out int minX, out int maxX);
+        GetClampedGridPreviewIndexRange(centerY, vertexRadius, width, out int minY, out int maxY);
         bool found = false;
-        for (int y = centerY - indexRadius; y <= centerY + indexRadius; y++)
+        for (int y = minY; y <= maxY; y++)
         {
-            for (int x = centerX - indexRadius; x <= centerX + indexRadius; x++)
+            for (int x = minX; x <= maxX; x++)
             {
-                if (x < 0 || y < 0 || x >= width || y >= width)
+                if (remainingTraversalBudget <= 0)
                 {
-                    continue;
+                    limitExceeded = true;
+                    return found;
                 }
 
+                remainingTraversalBudget--;
                 if (!IsAffectedGridPoint(centerX, centerY, x, y, vertexRadius, shape, includeBoundary))
                 {
                     continue;
@@ -1816,7 +1983,7 @@ internal static class TerrainToolRangeSystem
     }
 
     // HUD labels and formatting.
-    private static void UpdateRangeLabel(TerrainToolRule rule, GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, float range)
+    private static void UpdateRangeLabel(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, float range)
     {
         if (!GroundworkToolsDomain.ToolHudEnabled)
         {
@@ -2008,6 +2175,35 @@ internal static class TerrainToolRangeSystem
         }
     }
 
+    private static bool TryGetCurrentPendingPlacementCost(
+        Player player,
+        [NotNullWhen(true)] out PendingPlacementCost? pendingCost)
+    {
+        if (!PendingPlacementCosts.TryGetValue(player, out pendingCost))
+        {
+            return false;
+        }
+
+        if (pendingCost.IsCurrentFrame)
+        {
+            return true;
+        }
+
+        PendingPlacementCosts.Remove(player);
+        pendingCost = null;
+        return false;
+    }
+
+    private static void RemoveCompletedPendingPlacementCost(Player player, PendingPlacementCost pendingCost)
+    {
+        if (pendingCost.IsComplete &&
+            PendingPlacementCosts.TryGetValue(player, out PendingPlacementCost current) &&
+            ReferenceEquals(current, pendingCost))
+        {
+            PendingPlacementCosts.Remove(player);
+        }
+    }
+
     private static void WarnOnce(string key, string message)
     {
         if (ReportedWarnings.Add($"terrain_tool:{key}"))
@@ -2018,8 +2214,11 @@ internal static class TerrainToolRangeSystem
 
     internal sealed class TerrainOpSettingsState
     {
+        private readonly TerrainOp.Settings _settings;
+
         private TerrainOpSettingsState(TerrainOp.Settings settings)
         {
+            _settings = settings;
             Smooth = settings.m_smooth;
             LevelRadius = settings.m_levelRadius;
             RaiseRadius = settings.m_raiseRadius;
@@ -2049,6 +2248,11 @@ internal static class TerrainToolRangeSystem
             settings.m_raiseRadius = RaiseRadius;
             settings.m_smoothRadius = SmoothRadius;
             settings.m_paintRadius = PaintRadius;
+        }
+
+        internal void Restore()
+        {
+            Restore(_settings);
         }
     }
 
@@ -2117,11 +2321,22 @@ internal static class TerrainToolRangeSystem
 
     private sealed class PendingPlacementCost
     {
-        internal PendingPlacementCost(TerrainToolRule rule, float range, int frame)
+        private readonly ItemDrop.ItemData? _expectedTool;
+        private readonly bool _expectsDurability;
+        private bool _staminaConsumed;
+        private bool _durabilityConsumed;
+
+        internal PendingPlacementCost(
+            TerrainToolRule rule,
+            float range,
+            int frame,
+            ItemDrop.ItemData? expectedTool)
         {
             Rule = rule;
             Range = range;
             Frame = frame;
+            _expectedTool = expectedTool;
+            _expectsDurability = expectedTool?.m_shared?.m_useDurability == true;
         }
 
         internal TerrainToolRule Rule { get; }
@@ -2132,10 +2347,48 @@ internal static class TerrainToolRangeSystem
 
         internal bool IsCurrentFrame => IsValidForFrame(Time.frameCount);
 
+        internal bool IsComplete => _staminaConsumed && (!_expectsDurability || _durabilityConsumed);
+
         internal bool IsValidForFrame(int frame)
         {
             return frame - Frame <= 1;
         }
+
+        internal bool TryConsumeStamina(out float multiplier)
+        {
+            if (_staminaConsumed)
+            {
+                multiplier = 1f;
+                return false;
+            }
+
+            _staminaConsumed = true;
+            multiplier = Rule.GetStaminaCostMultiplier(Range);
+            return true;
+        }
+
+        internal bool TryConsumeDurability(ItemDrop.ItemData tool, out float multiplier)
+        {
+            if (!_expectsDurability ||
+                _durabilityConsumed ||
+                !ReferenceEquals(_expectedTool, tool))
+            {
+                multiplier = 1f;
+                return false;
+            }
+
+            _durabilityConsumed = true;
+            multiplier = Rule.GetDurabilityMultiplier(Range);
+            return true;
+        }
+    }
+
+    private readonly struct ActivePlacementContext(
+        TerrainToolRule rule,
+        ItemDrop.ItemData? expectedTool)
+    {
+        internal readonly TerrainToolRule Rule = rule;
+        internal readonly ItemDrop.ItemData? ExpectedTool = expectedTool;
     }
 
     private sealed class GridPreviewState
@@ -2254,8 +2507,6 @@ internal static class TerrainToolRangeSystem
 
         internal float DefaultRange { get; }
 
-        internal float VanillaRange => Mathf.Clamp(BaseRange, MinRange, MaxRange);
-
         private float MaterialCostFactor { get; }
 
         private float StaminaCostFactor { get; }
@@ -2339,134 +2590,6 @@ internal static class TerrainOpAwakeTerrainToolRangePatch
     private static void Finalizer(TerrainOp __instance, TerrainToolRangeSystem.TerrainOpSettingsState? __state)
     {
         TerrainToolRangeSystem.RestoreTerrainOp(__instance, __state);
-    }
-}
-
-[HarmonyPatch(typeof(Hud), "SetupPieceInfo")]
-internal static class HudSetupPieceInfoTerrainToolRangePatch
-{
-    private static void Prefix(Piece? piece, out string __state)
-    {
-        __state = piece != null ? piece.m_description : string.Empty;
-        TerrainToolRangeSystem.AppendPieceDescription(piece);
-        MassPlantingSystem.AppendPieceDescription(piece);
-    }
-
-    private static void Finalizer(Piece? piece, string __state)
-    {
-        if (piece != null)
-        {
-            piece.m_description = __state;
-        }
-    }
-}
-
-[HarmonyPatch(typeof(GameCamera), "UpdateCamera")]
-internal static class GameCameraUpdateCameraTerrainToolRangePatch
-{
-    private static void Prefix()
-    {
-        CameraZoomInputSuppressionSystem.BeginGameCameraUpdate();
-    }
-
-    private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-    {
-        var getMouseScrollWheel = AccessTools.Method(typeof(ZInput), nameof(ZInput.GetMouseScrollWheel));
-        var getMouseScrollWheelForCamera = AccessTools.Method(typeof(CameraZoomInputSuppressionSystem), nameof(CameraZoomInputSuppressionSystem.GetMouseScrollWheelForCamera));
-        var inputGetAxis = AccessTools.Method(typeof(Input), nameof(Input.GetAxis), [typeof(string)]);
-        var inputGetAxisForCamera = AccessTools.Method(typeof(CameraZoomInputSuppressionSystem), nameof(CameraZoomInputSuppressionSystem.GetAxisForCamera));
-
-        foreach (CodeInstruction instruction in instructions)
-        {
-            if (instruction.Calls(getMouseScrollWheel))
-            {
-                instruction.operand = getMouseScrollWheelForCamera;
-                yield return instruction;
-                continue;
-            }
-
-            if (instruction.Calls(inputGetAxis))
-            {
-                instruction.operand = inputGetAxisForCamera;
-                yield return instruction;
-                continue;
-            }
-
-            yield return instruction;
-        }
-    }
-
-    private static void Finalizer()
-    {
-        CameraZoomInputSuppressionSystem.EndGameCameraUpdate();
-        TerrainToolRangeSystem.ClearCameraZoomSuppression();
-        PickaxeTerrainScalingSystem.ClearCameraZoomSuppression();
-    }
-}
-
-internal static class CameraZoomInputSuppressionSystem
-{
-    private static bool InsideGameCameraUpdate { get; set; }
-
-    internal static void BeginGameCameraUpdate()
-    {
-        InsideGameCameraUpdate = true;
-    }
-
-    internal static void EndGameCameraUpdate()
-    {
-        InsideGameCameraUpdate = false;
-    }
-
-    internal static float GetMouseScrollWheelForCamera()
-    {
-        float scroll = ZInput.GetMouseScrollWheel();
-        return ShouldSuppressCameraZoomInput() ? 0f : scroll;
-    }
-
-    internal static float GetAxisForCamera(string axisName)
-    {
-        float value = Input.GetAxis(axisName);
-        return IsMouseScrollAxis(axisName) && ShouldSuppressCameraZoomInput() ? 0f : value;
-    }
-
-    internal static bool ShouldBlockZInputMouseScrollWheel()
-    {
-        return InsideGameCameraUpdate && ShouldSuppressCameraZoomInput();
-    }
-
-    private static bool ShouldSuppressCameraZoomInput()
-    {
-        return TerrainToolRangeSystem.ShouldSuppressCameraZoomInput() ||
-               MassPlantingSystem.ShouldSuppressCameraZoomInput() ||
-               PickaxeTerrainScalingSystem.ShouldSuppressCameraZoomInput();
-    }
-
-    private static bool IsMouseScrollAxis(string axisName)
-    {
-        return axisName.Equals("Mouse ScrollWheel", StringComparison.OrdinalIgnoreCase) ||
-               axisName.Equals("Mouse Scroll Wheel", StringComparison.OrdinalIgnoreCase);
-    }
-}
-
-[HarmonyPatch(typeof(ZInput), nameof(ZInput.GetMouseScrollWheel))]
-internal static class ZInputGetMouseScrollWheelCameraZoomSuppressionPatch
-{
-    private static bool Prefix(ref float __result)
-    {
-        if (MassPlantingSystem.ShouldBlockPlayerUpdateMouseScrollWheel())
-        {
-            __result = 0f;
-            return false;
-        }
-
-        if (!CameraZoomInputSuppressionSystem.ShouldBlockZInputMouseScrollWheel())
-        {
-            return true;
-        }
-
-        __result = 0f;
-        return false;
     }
 }
 

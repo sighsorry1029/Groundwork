@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.8
+
+- Fixed scaled terrain-tool placements so extra stamina and durability costs apply exactly once to the tool that performed the placement.
+- Fixed terrain tools resetting to the vanilla radius instead of the configured `range.default`, prevented range-wheel input from also zooming the camera, and bounded oversized grid preview searches with a safe fallback.
+- Hardened scalable pickaxe digs so temporary radius and depth changes stay bound to the exact terrain hit and are restored even when spawning fails.
+- Fixed pollination catch-up for honey, plant growth, and forage respawn so unloaded time keeps its reduced bonus while loaded bonuses still obey night and rain restrictions.
+- Fixed ranged foraging being limited by a fixed collider buffer in dense areas and removed duplicate bonus pickup effects.
+- Made plant and forage hover countdowns follow the actual timing calculations and removed the potentially misleading combined speed multiplier.
+- Improved mass-planting previews by rejecting overlaps with earlier preview slots, restricting rare placement fallback searches, and avoiding duplicate Grid or Mass instructions in partial key-hint layouts.
+- Prevented scythe sweeps from processing the same unhealthy multi-collider crop more than once, improved Jewelcrafting recalculation, and made temporary scythe item-type changes reversible.
+- Fixed stale ZenBeehive state after containers close automatically, preventing later inventory actions from being mistaken for a local honey harvest.
+- Added comprehensive unload cleanup for configuration, localization, generated UI, previews, Farming state, and compatibility changes.
+- Kept normal builds isolated from the live Valheim plugin directory; local deployment now requires explicitly setting `DeployLocal=true`.
+
 ## 1.0.7
 
 - Clarified the Farming level 20 mass planting requirement in piece tooltips and build key hints, including live Farming progress, while listing always-available grid planting first.

@@ -14,20 +14,22 @@ internal static class PickableRespawnHoverSystem
             return;
         }
 
-        if (!ResolveRemainingSeconds(pickable, out float remainingSeconds) ||
-            remainingSeconds <= 0.01f)
+        if (pickable.CanBePicked() ||
+            !FarmingSkillSystem.TryGetPickableRespawnTiming(
+                pickable,
+                out FarmingSkillSystem.PickableRespawnTiming timing) ||
+            !timing.HasPickedTime ||
+            timing.RemainingSeconds <= 0.01f)
         {
             return;
         }
 
-        float farmingMultiplier = FarmingSkillSystem.GetForagingRespawnSpeedMultiplierForHover(pickable);
+        float farmingMultiplier = FarmingSkillSystem.GetForagingRespawnSpeedMultiplier(pickable);
         float pollinationMultiplier = BeehivePollinationSystem.GetForagingRespawnMultiplierForHover(pickable);
         float rainMultiplier = EnvironmentEffectSystem.GetWetForagingRespawnSpeedMultiplier(pickable);
         AppendEffectHoverLines(
             ref hoverText,
-            remainingSeconds,
-            "groundwork_respawn_total",
-            "{0} (respawn {1})",
+            timing.RemainingSeconds,
             farmingMultiplier,
             pollinationMultiplier,
             rainMultiplier);
@@ -47,81 +49,20 @@ internal static class PickableRespawnHoverSystem
             return;
         }
 
-        float farmingMultiplier = FarmingSkillSystem.GetPlantGrowSpeedMultiplierForHover(plant);
+        float farmingMultiplier = FarmingSkillSystem.GetPlantGrowSpeedMultiplier(plant);
         float pollinationMultiplier = BeehivePollinationSystem.GetPlantGrowthMultiplierForHover(plant);
         float rainMultiplier = EnvironmentEffectSystem.GetWetPlantGrowSpeedMultiplier();
         AppendEffectHoverLines(
             ref hoverText,
             remainingSeconds,
-            "groundwork_growth_total",
-            "{0} (growth {1})",
             farmingMultiplier,
             pollinationMultiplier,
             rainMultiplier);
     }
 
-    private static bool ResolveRemainingSeconds(Pickable pickable, out float remainingSeconds)
-    {
-        remainingSeconds = 0f;
-        if (pickable.CanBePicked())
-        {
-            return true;
-        }
-
-        float respawnSeconds = Math.Max(0f, pickable.m_respawnTimeMinutes) * 60f;
-        if (respawnSeconds <= 0f)
-        {
-            return false;
-        }
-
-        if (FarmingSkillSystem.TryGetForagingRespawnSeconds(pickable, out float foragingRespawnSeconds))
-        {
-            respawnSeconds = foragingRespawnSeconds;
-        }
-
-        if (!TryGetPickableZdo(pickable, out ZDO? zdo))
-        {
-            remainingSeconds = respawnSeconds;
-            return true;
-        }
-
-        long pickedTime = zdo!.GetLong(ZDOVars.s_pickedTime, 0L);
-        if (pickedTime <= 1L)
-        {
-            remainingSeconds = respawnSeconds;
-            return true;
-        }
-
-        double elapsedSeconds = TimeSpan.FromTicks(Math.Max(0L, GetCurrentTicks() - pickedTime)).TotalSeconds;
-        remainingSeconds = Math.Max(0f, respawnSeconds - (float)elapsedSeconds);
-        return true;
-    }
-
-    private static long GetCurrentTicks()
-    {
-        return ZNet.instance != null
-            ? ZNet.instance.GetTime().Ticks
-            : DateTime.Now.Ticks;
-    }
-
-    private static bool TryGetPickableZdo(Pickable pickable, out ZDO? zdo)
-    {
-        zdo = null;
-        ZNetView? nview = pickable.m_nview;
-        if (nview == null || !nview.IsValid())
-        {
-            return false;
-        }
-
-        zdo = nview.GetZDO();
-        return zdo != null;
-    }
-
     private static void AppendEffectHoverLines(
         ref string hoverText,
         float remainingSeconds,
-        string totalToken,
-        string totalFallback,
         float farmingMultiplier,
         float pollinationMultiplier,
         float rainMultiplier)
@@ -136,12 +77,7 @@ internal static class PickableRespawnHoverSystem
             AppendLine(ref hoverText, Colorize(string.Join(" ", parts)));
         }
 
-        float totalMultiplier = farmingMultiplier * pollinationMultiplier * rainMultiplier;
-        string duration = GroundworkLocalization.FormatDuration(remainingSeconds);
-        string durationLine = totalMultiplier > 1.001f
-            ? GroundworkLocalization.Format(totalToken, totalFallback, duration, FormatMultiplier(totalMultiplier))
-            : duration;
-        AppendLine(ref hoverText, Colorize(durationLine));
+        AppendLine(ref hoverText, Colorize(GroundworkLocalization.FormatDuration(remainingSeconds)));
     }
 
     private static void AddMultiplierPart(List<string> parts, float multiplier, string token, string fallback)

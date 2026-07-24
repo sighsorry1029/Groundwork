@@ -21,7 +21,7 @@ namespace Groundwork;
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.0.7";
+    internal const string ModVersion = "1.0.8";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
@@ -90,12 +90,39 @@ public class GroundworkPlugin : BaseUnityPlugin
 
     public void OnDestroy()
     {
-        _harmony.UnpatchSelf();
-        DisposeSyncedYamlValue();
-        DisposeWatcher();
+        RunShutdownStep("Harmony patches", _harmony.UnpatchSelf);
+        RunShutdownStep(nameof(MassPlantingSystem), MassPlantingSystem.Shutdown);
+        RunShutdownStep(nameof(TerrainToolRangeSystem), TerrainToolRangeSystem.Shutdown);
+        RunShutdownStep(nameof(PickaxeTerrainScalingSystem), PickaxeTerrainScalingSystem.Shutdown);
+        RunShutdownStep(nameof(TerrainDigFloatingTextSystem), TerrainDigFloatingTextSystem.Clear);
+        RunShutdownStep(nameof(FarmingSkillSystem), FarmingSkillSystem.Shutdown);
+        RunShutdownStep(nameof(ZenBeehiveCompatSystem), ZenBeehiveCompatSystem.Shutdown);
+        RunShutdownStep(nameof(BeehivePollinationSystem), BeehivePollinationSystem.Shutdown);
+        RunShutdownStep(nameof(ScytheHarvestSystem), ScytheHarvestSystem.Shutdown);
+        RunShutdownStep(nameof(ScytheToolCompatSystem), ScytheToolCompatSystem.Shutdown);
+        RunShutdownStep(nameof(CameraZoomInputSuppressionSystem), CameraZoomInputSuppressionSystem.Shutdown);
+        RunShutdownStep(nameof(Localizer), Localizer.Unload);
+        RunShutdownStep("synced YAML state", DisposeSyncedYamlValue);
+        RunShutdownStep("YAML file watcher", DisposeWatcher);
+        _terrainTools = Array.Empty<NormalizedTerrainToolConfig>();
+        _suppressSyncedYamlChanged = false;
+        _yamlAuthorityMode = default;
         if (ReferenceEquals(Instance, this))
         {
             Instance = null;
+        }
+    }
+
+    private static void RunShutdownStep(string name, Action shutdown)
+    {
+        try
+        {
+            shutdown();
+        }
+        catch (Exception ex)
+        {
+            ModLogger.LogWarning(
+                $"Could not fully clean up {name} while unloading Groundwork: {ex.GetBaseException().Message}");
         }
     }
 
@@ -107,9 +134,12 @@ public class GroundworkPlugin : BaseUnityPlugin
         }
 
         TerrainToolRangeSystem.RestoreObjectDb(objectDb);
-        ScytheToolCompatSystem.ApplyToObjectDb(objectDb);
+        bool scytheItemTypesChanged = ScytheToolCompatSystem.ApplyToObjectDb(objectDb);
         TerrainToolRangeSystem.ApplyToObjectDb(objectDb, TerrainTools);
-        ScytheToolCompatSystem.NotifyJewelcraftingEffectRecalcIfPresent();
+        if (scytheItemTypesChanged)
+        {
+            ScytheToolCompatSystem.NotifyJewelcraftingEffectRecalcIfPresent();
+        }
     }
 
     internal static void TryApplyPendingConfig()
@@ -403,36 +433,22 @@ public class GroundworkPlugin : BaseUnityPlugin
     private class ConfigurationManagerAttributes
     {
         [UsedImplicitly] public int? Order = null!;
-        [UsedImplicitly] public bool? Browsable = null!;
-        [UsedImplicitly] public string? Category = null!;
-        [UsedImplicitly] public Action<ConfigEntryBase>? CustomDrawer = null!;
     }
 }
 
 public static class KeyboardExtensions
 {
-    extension(KeyboardShortcut shortcut)
+    public static bool IsKeyDown(this KeyboardShortcut shortcut)
     {
-        public bool IsKeyDown()
-        {
-            return shortcut.MainKey != KeyCode.None && Input.GetKeyDown(shortcut.MainKey) && shortcut.Modifiers.All(Input.GetKey);
-        }
-
-        public bool IsKeyHeld()
-        {
-            return shortcut.MainKey != KeyCode.None && Input.GetKey(shortcut.MainKey) && shortcut.Modifiers.All(Input.GetKey);
-        }
+        return shortcut.MainKey != KeyCode.None &&
+               Input.GetKeyDown(shortcut.MainKey) &&
+               shortcut.Modifiers.All(Input.GetKey);
     }
-}
 
-public static class ToggleExtentions
-{
-    extension(GroundworkPlugin.Toggle value)
+    public static bool IsKeyHeld(this KeyboardShortcut shortcut)
     {
-        public bool IsOn()
-        {
-            return value == GroundworkPlugin.Toggle.On;
-        }
-
+        return shortcut.MainKey != KeyCode.None &&
+               Input.GetKey(shortcut.MainKey) &&
+               shortcut.Modifiers.All(Input.GetKey);
     }
 }

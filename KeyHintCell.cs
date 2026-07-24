@@ -11,6 +11,8 @@ namespace Groundwork;
 internal sealed class KeyHintCell
 {
     private readonly bool _hideOnRestore;
+    private readonly Transform? _originalParent;
+    private readonly int _originalSiblingIndex;
     private readonly List<TMP_Text> _keys = [];
     private readonly List<GameObject> _keyParents = [];
     private readonly List<TMP_Text> _extraTexts = [];
@@ -28,12 +30,16 @@ internal sealed class KeyHintCell
     {
         Root = root;
         _hideOnRestore = hideOnRestore;
+        _originalParent = root.transform.parent;
+        _originalSiblingIndex = root.transform.GetSiblingIndex();
         RefreshChildren();
     }
 
     internal GameObject Root { get; }
 
     internal bool IsValid => Root != null && (_label != null || _keys.Count > 0 || _extraTexts.Count > 0);
+
+    internal int OriginalSiblingIndex => _originalSiblingIndex;
 
     internal static KeyHintCell? Resolve(Transform owner, string transformPath)
     {
@@ -150,6 +156,11 @@ internal sealed class KeyHintCell
 
     internal void Restore()
     {
+        if (Root == null)
+        {
+            return;
+        }
+
         if (!_capturedOriginals)
         {
             if (_hideOnRestore)
@@ -157,6 +168,7 @@ internal sealed class KeyHintCell
                 Root.SetActive(false);
             }
 
+            RestoreSiblingIndex();
             return;
         }
 
@@ -192,6 +204,8 @@ internal sealed class KeyHintCell
                 _extraTexts[i].gameObject.SetActive(_originalExtraTextStates[i]);
             }
         }
+
+        RestoreSiblingIndex();
     }
 
     internal void SetActive(bool active)
@@ -300,6 +314,17 @@ internal sealed class KeyHintCell
         foreach (TMP_Text extraText in _extraTexts)
         {
             _originalExtraTextStates.Add(extraText != null && extraText.gameObject.activeSelf);
+        }
+    }
+
+    private void RestoreSiblingIndex()
+    {
+        if (_originalParent != null && Root.transform.parent == _originalParent)
+        {
+            Root.transform.SetSiblingIndex(Mathf.Clamp(
+                _originalSiblingIndex,
+                0,
+                Mathf.Max(0, _originalParent.childCount - 1)));
         }
     }
 

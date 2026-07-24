@@ -10,7 +10,7 @@ internal static class GroundworkToolsDomain
     private static GroundworkPlugin.FarmingSettings Farming => GroundworkPlugin.Settings.Farming;
 
     internal static bool MassPlantingEnabled =>
-        Farming.MassPlantingEnabled?.Value.IsOn() == true;
+        Farming.MassPlantingEnabled?.Value == GroundworkPlugin.Toggle.On;
 
     internal static KeyboardShortcut ToolWheelModifierHotkey =>
         TerrainTools.ToolWheelModifierHotkey?.Value ?? new KeyboardShortcut(KeyCode.None);
@@ -34,10 +34,10 @@ internal static class GroundworkToolsDomain
         TerrainTools.TerrainToolPreviewToggleHotkey?.Value ?? new KeyboardShortcut(KeyCode.None);
 
     internal static bool PavedRoadSmoothHeight =>
-        TerrainTools.PavedRoadSmoothHeight?.Value.IsOn() == true;
+        TerrainTools.PavedRoadSmoothHeight?.Value == GroundworkPlugin.Toggle.On;
 
     internal static bool ToolHudEnabled =>
-        TerrainTools.ToolHud?.Value.IsOn() == true;
+        TerrainTools.ToolHud?.Value == GroundworkPlugin.Toggle.On;
 
     internal static float ForagingPickupMaxRange =>
         Mathf.Max(0f, Farming.ForagingPickupMaxRange?.Value ?? 0f);

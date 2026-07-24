@@ -19,10 +19,12 @@ public class Localizer
 {
     private static readonly Dictionary<string, Dictionary<string, Func<string>>> PlaceholderProcessors = new();
     private static readonly Dictionary<string, Dictionary<string, string>> LoadedTexts = new();
-    private static readonly ConditionalWeakTable<Localization, LanguageState> LocalizationLanguages = new();
+    private static ConditionalWeakTable<Localization, LanguageState> LocalizationLanguages = new();
     private static readonly List<WeakReference<Localization>> LocalizationObjects = [];
     private static readonly List<string> FileExtensions = [".json", ".yml"];
     private static BaseUnityPlugin? _plugin;
+    private static Harmony? _harmony;
+    private static bool _patched;
 
     public static event Action? OnLocalizationComplete;
 
@@ -53,7 +55,54 @@ public class Localizer
 
     public static void Load()
     {
-        _ = Plugin;
+        BaseUnityPlugin plugin = Plugin;
+        if (_patched)
+        {
+            return;
+        }
+
+        Harmony harmony = new($"{plugin.Info.Metadata.GUID}.LocalizationManager");
+        try
+        {
+            harmony.Patch(
+                AccessTools.DeclaredMethod(typeof(Localization), nameof(Localization.SetupLanguage)),
+                postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(LoadLocalization))));
+            harmony.Patch(
+                AccessTools.DeclaredMethod(typeof(FejdStartup), nameof(FejdStartup.SetupGui)),
+                postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(LoadLocalizationLater))));
+            harmony.Patch(
+                AccessTools.DeclaredMethod(typeof(FejdStartup), nameof(FejdStartup.Start)),
+                postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(SafeCallLocalizeComplete))));
+            _harmony = harmony;
+            _patched = true;
+        }
+        catch
+        {
+            harmony.UnpatchSelf();
+            throw;
+        }
+    }
+
+    public static void Unload()
+    {
+        try
+        {
+            if (_patched)
+            {
+                _harmony?.UnpatchSelf();
+            }
+        }
+        finally
+        {
+            _patched = false;
+            _harmony = null;
+            PlaceholderProcessors.Clear();
+            LoadedTexts.Clear();
+            LocalizationLanguages = new ConditionalWeakTable<Localization, LanguageState>();
+            LocalizationObjects.Clear();
+            OnLocalizationComplete = null;
+            _plugin = null;
+        }
     }
 
     public static void AddPlaceholder<T>(
@@ -251,20 +300,6 @@ public class Localizer
     private static Dictionary<string, string>? Deserialize(string data)
     {
         return new DeserializerBuilder().IgnoreFields().Build().Deserialize<Dictionary<string, string>?>(data);
-    }
-
-    static Localizer()
-    {
-        Harmony harmony = new("org.bepinex.helpers.LocalizationManager");
-        harmony.Patch(
-            AccessTools.DeclaredMethod(typeof(Localization), nameof(Localization.SetupLanguage)),
-            postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(LoadLocalization))));
-        harmony.Patch(
-            AccessTools.DeclaredMethod(typeof(FejdStartup), nameof(FejdStartup.SetupGui)),
-            postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(LoadLocalizationLater))));
-        harmony.Patch(
-            AccessTools.DeclaredMethod(typeof(FejdStartup), nameof(FejdStartup.Start)),
-            postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(SafeCallLocalizeComplete))));
     }
 
     private sealed class LanguageState(string language)

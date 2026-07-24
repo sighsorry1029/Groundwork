@@ -11,8 +11,6 @@ internal static class PickaxeTerrainScalingSystem
     private const string GenericPickaxeToolPrefabName = "Pickaxe";
     private const string TerrainDigConfigName = "terrainDig";
     private static readonly Dictionary<string, float> CurrentScalesByPrefab = new(System.StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<Attack> VanillaFallbackAttacks = [];
-    private static readonly Dictionary<Attack, PendingTerrainDigText> PendingFallbackTexts = [];
     private static Attack? _activeMeleeAttack;
     private static KeyHints? _activeKeyHints;
     private static KeyHintCell? _digHint;
@@ -20,7 +18,21 @@ internal static class PickaxeTerrainScalingSystem
     private static string? _lastDigHintLabel;
     private static string? _lastDigHintKeyText;
 
-    internal static Attack? ActiveMeleeAttack => _activeMeleeAttack;
+    internal static void Shutdown()
+    {
+        if (_digHint?.Root != null)
+        {
+            UnityEngine.Object.Destroy(_digHint.Root);
+        }
+
+        CurrentScalesByPrefab.Clear();
+        _activeMeleeAttack = null;
+        _activeKeyHints = null;
+        _digHint = null;
+        _showingDigHint = false;
+        SuppressCameraZoomThisFrame = false;
+        ClearDigHintCache();
+    }
 
     internal static void BeginMeleeAttack(Attack attack)
     {
@@ -33,19 +45,29 @@ internal static class PickaxeTerrainScalingSystem
         {
             _activeMeleeAttack = null;
         }
-
-        VanillaFallbackAttacks.Remove(attack);
-        PendingFallbackTexts.Remove(attack);
     }
 
-    internal static TerrainScalingScope? Begin(GameObject? prefab, Character? character, ItemDrop.ItemData? weapon)
+    internal static bool TryBeginSpawn(
+        GameObject? prefab,
+        Character character,
+        ItemDrop.ItemData weapon,
+        out TerrainSpawnState state)
+    {
+        bool canSpawn = CanSpawnTerrainModifier(
+            character,
+            weapon,
+            _activeMeleeAttack,
+            out PendingTerrainDigText? fallbackText);
+        TerrainScalingScope? scope = canSpawn && !fallbackText.HasValue
+            ? Begin(prefab, character, weapon)
+            : null;
+        state = new TerrainSpawnState(scope, fallbackText);
+        return canSpawn;
+    }
+
+    private static TerrainScalingScope? Begin(GameObject? prefab, Character? character, ItemDrop.ItemData? weapon)
     {
         if (prefab == null || !TryResolvePrimaryTerrainDig(character, weapon, _activeMeleeAttack))
-        {
-            return null;
-        }
-
-        if (_activeMeleeAttack != null && VanillaFallbackAttacks.Remove(_activeMeleeAttack))
         {
             return null;
         }
@@ -61,47 +83,46 @@ internal static class PickaxeTerrainScalingSystem
         }
 
         TerrainScalingScope scope = new(character!, weapon!, _activeMeleeAttack, radiusScale, depthScale, rule.StaminaCostFactor, rule.DurabilityFactor);
-        foreach (TerrainOp terrainOp in prefab.GetComponentsInChildren<TerrainOp>(includeInactive: true))
+        try
         {
-            if (terrainOp?.m_settings == null)
+            foreach (TerrainOp terrainOp in prefab.GetComponentsInChildren<TerrainOp>(includeInactive: true))
             {
-                continue;
+                if (terrainOp?.m_settings == null)
+                {
+                    continue;
+                }
+
+                scope.TerrainOps.Add(new TerrainOpState(terrainOp.m_settings));
+                Apply(terrainOp.m_settings, radiusScale, depthScale);
             }
 
-            scope.TerrainOps.Add(new TerrainOpState(terrainOp.m_settings));
-            Apply(terrainOp.m_settings, radiusScale, depthScale);
-        }
-
-        foreach (TerrainModifier modifier in prefab.GetComponentsInChildren<TerrainModifier>(includeInactive: true))
-        {
-            if (modifier == null)
+            foreach (TerrainModifier modifier in prefab.GetComponentsInChildren<TerrainModifier>(includeInactive: true))
             {
-                continue;
+                if (modifier == null)
+                {
+                    continue;
+                }
+
+                scope.TerrainModifiers.Add(new TerrainModifierState(modifier));
+                Apply(modifier, radiusScale, depthScale);
             }
 
-            scope.TerrainModifiers.Add(new TerrainModifierState(modifier));
-            Apply(modifier, radiusScale, depthScale);
+            return scope;
         }
-
-        return scope;
+        catch
+        {
+            scope.Restore();
+            throw;
+        }
     }
 
-    internal static void End(TerrainScalingScope? scope, GameObject? spawnedTerrainObject)
+    private static bool CanSpawnTerrainModifier(
+        Character character,
+        ItemDrop.ItemData weapon,
+        Attack? attack,
+        out PendingTerrainDigText? fallbackText)
     {
-        if (scope != null)
-        {
-            scope.ApplyTerrainHitResult(spawnedTerrainObject);
-        }
-        else
-        {
-            ShowPendingFallbackText(spawnedTerrainObject);
-        }
-
-        scope?.Restore();
-    }
-
-    internal static bool CanSpawnTerrainModifier(Character character, ItemDrop.ItemData weapon, Attack? attack)
-    {
+        fallbackText = null;
         if (!TryResolveCostProfile(character, weapon, attack, out TerrainCostProfile profile))
         {
             return true;
@@ -122,13 +143,13 @@ internal static class PickaxeTerrainScalingSystem
                 Hud.instance?.StaminaBarEmptyFlash();
             }
 
-            UseVanillaFallback(attack, profile, "stamina");
+            fallbackText = CreateVanillaFallbackText(profile, "stamina");
             return true;
         }
 
         if (!hasScaledDurability)
         {
-            UseVanillaFallback(attack, profile, "durability");
+            fallbackText = CreateVanillaFallbackText(profile, "durability");
             return true;
         }
 
@@ -560,32 +581,17 @@ internal static class PickaxeTerrainScalingSystem
         return totalDurabilityCost <= 0f || weapon.m_durability + 0.001f >= totalDurabilityCost;
     }
 
-    private static void UseVanillaFallback(Attack? attack, TerrainCostProfile profile, string missingResource)
+    private static PendingTerrainDigText CreateVanillaFallbackText(
+        TerrainCostProfile profile,
+        string missingResource)
     {
-        if (attack != null)
-        {
-            VanillaFallbackAttacks.Add(attack);
-            PendingFallbackTexts[attack] = new PendingTerrainDigText(
-                GroundworkLocalization.Format(
-                    "groundwork_pickaxe_not_enough_resource",
-                    "Not enough {0} for x{1} terrain dig",
-                    FormatResourceName(missingResource),
-                    FormatScale(profile.SelectedScale)),
-                new Color(1f, 0.63f, 0.2f, 1f));
-        }
-    }
-
-    private static void ShowPendingFallbackText(GameObject? spawnedTerrainObject)
-    {
-        if (spawnedTerrainObject == null ||
-            _activeMeleeAttack == null ||
-            !PendingFallbackTexts.TryGetValue(_activeMeleeAttack, out PendingTerrainDigText pendingText))
-        {
-            return;
-        }
-
-        PendingFallbackTexts.Remove(_activeMeleeAttack);
-        TerrainDigFloatingTextSystem.Show(spawnedTerrainObject.transform.position, pendingText.Text, pendingText.Color);
+        return new PendingTerrainDigText(
+            GroundworkLocalization.Format(
+                "groundwork_pickaxe_not_enough_resource",
+                "Not enough {0} for x{1} terrain dig",
+                FormatResourceName(missingResource),
+                FormatScale(profile.SelectedScale)),
+            new Color(1f, 0.63f, 0.2f, 1f));
     }
 
     private static string FormatScale(float scale)
@@ -635,6 +641,54 @@ internal static class PickaxeTerrainScalingSystem
         if (modifier.m_smooth)
         {
             modifier.m_smoothRadius *= radiusScale;
+        }
+    }
+
+    internal sealed class TerrainSpawnState
+    {
+        private readonly TerrainScalingScope? _scope;
+        private readonly PendingTerrainDigText? _fallbackText;
+        private bool _restored;
+
+        internal TerrainSpawnState(
+            TerrainScalingScope? scope,
+            PendingTerrainDigText? fallbackText)
+        {
+            _scope = scope;
+            _fallbackText = fallbackText;
+        }
+
+        internal void Complete(GameObject? spawnedTerrainObject)
+        {
+            try
+            {
+                if (_scope != null)
+                {
+                    _scope.ApplyTerrainHitResult(spawnedTerrainObject);
+                }
+                else if (spawnedTerrainObject != null && _fallbackText is { } fallbackText)
+                {
+                    TerrainDigFloatingTextSystem.Show(
+                        spawnedTerrainObject.transform.position,
+                        fallbackText.Text,
+                        fallbackText.Color);
+                }
+            }
+            finally
+            {
+                Restore();
+            }
+        }
+
+        internal void Restore()
+        {
+            if (_restored)
+            {
+                return;
+            }
+
+            _scope?.Restore();
+            _restored = true;
         }
     }
 
@@ -744,7 +798,7 @@ internal static class PickaxeTerrainScalingSystem
         };
     }
 
-    private readonly struct PendingTerrainDigText
+    internal readonly struct PendingTerrainDigText
     {
         internal PendingTerrainDigText(string text, Color color)
         {
@@ -929,52 +983,28 @@ internal static class AttackSpawnOnHitTerrainPickaxeScalingPatch
         Character character,
         ItemDrop.ItemData weapon,
         ref GameObject? __result,
-        out PickaxeTerrainScalingSystem.TerrainScalingScope? __state)
+        out PickaxeTerrainScalingSystem.TerrainSpawnState __state)
     {
-        if (!PickaxeTerrainScalingSystem.CanSpawnTerrainModifier(character, weapon, PickaxeTerrainScalingSystem.ActiveMeleeAttack))
+        if (!PickaxeTerrainScalingSystem.TryBeginSpawn(prefab, character, weapon, out __state))
         {
-            __state = null;
             __result = null;
             return false;
         }
 
-        __state = PickaxeTerrainScalingSystem.Begin(prefab, character, weapon);
         return true;
     }
 
-    private static void Postfix(GameObject? __result, PickaxeTerrainScalingSystem.TerrainScalingScope? __state)
+    private static void Postfix(GameObject? __result, PickaxeTerrainScalingSystem.TerrainSpawnState? __state)
     {
-        PickaxeTerrainScalingSystem.End(__state, __result);
+        __state?.Complete(__result);
     }
 
     private static System.Exception? Finalizer(
-        PickaxeTerrainScalingSystem.TerrainScalingScope? __state,
+        PickaxeTerrainScalingSystem.TerrainSpawnState? __state,
         System.Exception? __exception)
     {
-        if (__exception != null)
-        {
-            __state?.Restore();
-        }
-
+        __state?.Restore();
         return __exception;
-    }
-}
-
-[HarmonyPatch(typeof(KeyHints), "Awake")]
-internal static class KeyHintsAwakePickaxeTerrainScalingPatch
-{
-    private static void Postfix(KeyHints __instance)
-    {
-        PickaxeTerrainScalingSystem.InitializeKeyHints(__instance);
-    }
-}
-
-[HarmonyPatch(typeof(KeyHints), "UpdateHints")]
-internal static class KeyHintsUpdatePickaxeTerrainScalingPatch
-{
-    private static void Postfix(KeyHints __instance)
-    {
-        PickaxeTerrainScalingSystem.UpdateKeyHint(__instance);
     }
 }
 

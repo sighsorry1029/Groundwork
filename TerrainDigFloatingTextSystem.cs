@@ -14,6 +14,20 @@ internal static class TerrainDigFloatingTextSystem
     private static readonly List<Entry> Entries = [];
     private static readonly List<int> RemoveBuffer = [];
 
+    internal static void Clear()
+    {
+        foreach (Entry entry in Entries)
+        {
+            if (entry.Label != null)
+            {
+                Object.Destroy(entry.Label.gameObject);
+            }
+        }
+
+        Entries.Clear();
+        RemoveBuffer.Clear();
+    }
+
     internal static void Show(Vector3 worldPosition, string text, Color color)
     {
         TextMeshProUGUI? label = CreateLabel(color);
