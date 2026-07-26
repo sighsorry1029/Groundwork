@@ -466,6 +466,8 @@
     <Compile Include="Groundwork\GroundworkHarmonyDispatch.cs" />
     <Compile Include="PickaxeTerrainScalingSystem.cs" />
     <Compile Include="Groundwork\AssemblyInfo.cs" />
+    <Compile Include="GrowthOverrideSystem.cs" />
+    <Compile Include="GrowthReferenceOwnership.cs" />
     <Compile Include="FarmingSkillSystem.cs" />
     <Compile Include="BeehivePollinationSystem.cs" />
     <Compile Include="ZenBeehiveCompatSystem.cs" />

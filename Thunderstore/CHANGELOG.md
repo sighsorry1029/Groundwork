@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.9
+
+- Added owner-grouped `pickables.reference.yml` and `plants.reference.yml`, with root-sequence `pickables.yml` and `plants.yml` overrides for Pickable respawn/Farming behavior and Plant grow-time ranges under `BepInEx/config/Groundwork/`.
+- Registered `Pickable_Dandelion` and `Pickable_Thistle` as default Farming targets with range/scythe harvesting, Farming skill gain, and vanilla bonus-yield rolls.
+- Applied growth overrides at runtime without permanently replacing prefab values, preserving live values from mods such as PlantEverything when override fields are omitted.
+- Read and validated both Pickable and Plant override files before atomically replacing either in-memory rule set, then server-synced the normalized pair.
+- Moved the generated `Groundwork.yml` terrain-tool configuration into `BepInEx/config/Groundwork/`; previous root-level YAML files and the unreleased combined/expanded Growth schemas are not migrated or parsed.
+- Preserved native and configured Farming bonus VFX/SFX by supplying an interaction-scoped fallback when a Pickable has an empty `m_bonusEffect`.
+
 ## 1.0.8
 
 - Fixed scaled terrain-tool placements so extra stamina and durability costs apply exactly once to the tool that performed the placement.

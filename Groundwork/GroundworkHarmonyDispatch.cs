@@ -103,8 +103,9 @@ internal static class ZNetSceneAwakeGroundworkPatch
 {
     private static void Postfix(ZNetScene __instance)
     {
+        GrowthOverrideSystem.OnZNetSceneReady(__instance);
         ScytheHarvestSystem.RefreshCultivatedPickables(__instance);
-        FarmingSkillSystem.ApplyForagingBonusEffectFallbacks(__instance);
+        FarmingSkillSystem.RefreshForagingBonusEffectFallback(__instance);
     }
 }
 

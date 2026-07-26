@@ -16,6 +16,7 @@ internal static class FarmingSkillSystem
     private static bool _rangePicking;
     private static int _suppressRangePickup;
     private static int _pickupMask;
+    private static EffectList? _foragingBonusEffectFallback;
 
     internal readonly struct RangePickupSuppression : IDisposable
     {
@@ -44,6 +45,44 @@ internal static class FarmingSkillSystem
         internal readonly bool HasPickedTime = hasPickedTime;
     }
 
+    internal sealed class PickableInteractFarmingState
+    {
+        private readonly Pickable _pickable;
+        private readonly Skills.SkillType _pickRaiseSkill;
+        private readonly float _maxLevelBonusChance;
+        private readonly int _bonusYieldAmount;
+        private readonly EffectList _bonusEffect;
+        private bool _restored;
+
+        internal PickableInteractFarmingState(Pickable pickable)
+        {
+            _pickable = pickable;
+            _pickRaiseSkill = pickable.m_pickRaiseSkill;
+            _maxLevelBonusChance = pickable.m_maxLevelBonusChance;
+            _bonusYieldAmount = pickable.m_bonusYieldAmount;
+            _bonusEffect = pickable.m_bonusEffect;
+        }
+
+        internal void Restore()
+        {
+            if (_restored)
+            {
+                return;
+            }
+
+            _restored = true;
+            if (_pickable == null)
+            {
+                return;
+            }
+
+            _pickable.m_pickRaiseSkill = _pickRaiseSkill;
+            _pickable.m_maxLevelBonusChance = _maxLevelBonusChance;
+            _pickable.m_bonusYieldAmount = _bonusYieldAmount;
+            _pickable.m_bonusEffect = _bonusEffect;
+        }
+    }
+
     internal static void Shutdown()
     {
         SeenPickables.Clear();
@@ -51,49 +90,115 @@ internal static class FarmingSkillSystem
         _rangePicking = false;
         _suppressRangePickup = 0;
         _pickupMask = 0;
+        _foragingBonusEffectFallback = null;
     }
 
     internal static bool IsForagingTarget(Pickable? pickable)
+    {
+        if (pickable == null)
+        {
+            return false;
+        }
+
+        float respawnMinutes = pickable.m_respawnTimeMinutes;
+        bool? configuredTarget = null;
+        if (GrowthOverrideSystem.TryGetPickableRule(
+                pickable,
+                out GrowthOverrideSystem.ResolvedPickableRule rule))
+        {
+            if (rule.HasRespawnOverride)
+            {
+                respawnMinutes = rule.RespawnMinutes;
+            }
+
+            configuredTarget = rule.ForagingTarget;
+        }
+
+        return respawnMinutes > 0f &&
+               (configuredTarget ?? DropsEdibleItem(pickable));
+    }
+
+    internal static bool IsAutomaticForagingTarget(Pickable? pickable)
     {
         return pickable != null &&
                pickable.m_respawnTimeMinutes > 0f &&
                DropsEdibleItem(pickable);
     }
 
-    internal static void ApplyForagingBonusEffectFallbacks(ZNetScene scene)
+    internal static void RefreshForagingBonusEffectFallback(ZNetScene scene)
     {
-        EffectList? fallback = ResolveForagingBonusEffectFallback(scene);
-        if (fallback == null || !fallback.HasEffects())
+        if (scene == null)
         {
             return;
         }
 
-        int patched = 0;
-        foreach (GameObject prefab in EnumerateScenePrefabs(scene))
+        _foragingBonusEffectFallback = ResolveForagingBonusEffectFallback(scene);
+    }
+
+    internal static PickableInteractFarmingState? BeginFarmingInteract(
+        Pickable pickable,
+        Humanoid character)
+    {
+        if (pickable == null ||
+            character is not Player ||
+            !IsForagingTarget(pickable))
         {
-            if (prefab == null)
-            {
-                continue;
-            }
-
-            Pickable[] pickables = prefab.GetComponentsInChildren<Pickable>(includeInactive: true);
-            foreach (Pickable pickable in pickables)
-            {
-                if (!IsForagingTarget(pickable) ||
-                    pickable.m_pickRaiseSkill != Skills.SkillType.Farming ||
-                    HasEffect(pickable.m_bonusEffect))
-                {
-                    continue;
-                }
-
-                pickable.m_bonusEffect = CloneEffectList(fallback);
-                patched++;
-            }
+            return null;
         }
 
-        if (patched > 0)
+        bool hasRule = GrowthOverrideSystem.TryGetPickableRule(
+            pickable,
+            out GrowthOverrideSystem.ResolvedPickableRule rule);
+        bool configuredBonus = hasRule && rule.BonusYield == true;
+        bool nativeFarmingBonus = pickable.m_pickRaiseSkill == Skills.SkillType.Farming;
+        if (!configuredBonus && !nativeFarmingBonus)
         {
-            GroundworkPlugin.ModLogger.LogInfo($"Added fallback Farming bonus effect to {patched} foraging pickable prefab(s) with empty m_bonusEffect.");
+            return null;
+        }
+
+        if (configuredBonus &&
+            pickable.m_pickRaiseSkill != Skills.SkillType.None &&
+            pickable.m_pickRaiseSkill != Skills.SkillType.Farming)
+        {
+            return null;
+        }
+
+        Skills.SkillType pickRaiseSkill = configuredBonus
+            ? Skills.SkillType.Farming
+            : pickable.m_pickRaiseSkill;
+        float maxChance = configuredBonus && rule.HasMaxChance
+            ? rule.MaxChanceAtLevel100
+            : pickable.m_maxLevelBonusChance;
+        int bonusAmount = configuredBonus && rule.HasBonusAmount
+            ? rule.BonusAmount
+            : pickable.m_bonusYieldAmount;
+        EffectList bonusEffect = pickable.m_bonusEffect;
+        if (!HasEffect(bonusEffect))
+        {
+            bonusEffect = _foragingBonusEffectFallback ?? new EffectList();
+        }
+
+        if (pickRaiseSkill == pickable.m_pickRaiseSkill &&
+            Mathf.Approximately(maxChance, pickable.m_maxLevelBonusChance) &&
+            bonusAmount == pickable.m_bonusYieldAmount &&
+            ReferenceEquals(bonusEffect, pickable.m_bonusEffect))
+        {
+            return null;
+        }
+
+        PickableInteractFarmingState state = new(pickable);
+        try
+        {
+            pickable.m_pickRaiseSkill = pickRaiseSkill;
+            pickable.m_maxLevelBonusChance = maxChance;
+            pickable.m_bonusYieldAmount = bonusAmount;
+            pickable.m_bonusEffect = bonusEffect;
+            return state;
+        }
+        catch
+        {
+            state.Restore();
+            throw;
         }
     }
 
@@ -200,13 +305,23 @@ internal static class FarmingSkillSystem
             return false;
         }
 
-        float respawnSeconds = Math.Max(0f, pickable.m_respawnTimeMinutes) * 60f;
+        float respawnMinutes = Math.Max(0f, pickable.m_respawnTimeMinutes);
+        bool modified = false;
+        if (GrowthOverrideSystem.TryGetPickableRule(
+                pickable,
+                out GrowthOverrideSystem.ResolvedPickableRule rule) &&
+            rule.HasRespawnOverride)
+        {
+            modified = !Mathf.Approximately(respawnMinutes, rule.RespawnMinutes);
+            respawnMinutes = rule.RespawnMinutes;
+        }
+
+        float respawnSeconds = respawnMinutes * 60f;
         if (respawnSeconds <= 0f)
         {
             return false;
         }
 
-        bool modified = false;
         if (IsForagingTarget(pickable))
         {
             float speed = GetForagingRespawnSpeedMultiplier(pickable);
@@ -309,7 +424,13 @@ internal static class FarmingSkillSystem
 
     internal static void TryModifyGrowTime(Plant plant, ref float growTime)
     {
-        if (plant == null || growTime <= 0f)
+        if (plant == null)
+        {
+            return;
+        }
+
+        ApplyConfiguredPlantGrowTime(plant, ref growTime);
+        if (growTime <= 0f)
         {
             return;
         }
@@ -317,6 +438,31 @@ internal static class FarmingSkillSystem
         TryModifyPlanterGrowTime(plant, ref growTime);
         BeehivePollinationSystem.TryModifyPlantGrowTime(plant, ref growTime);
         EnvironmentEffectSystem.TryModifyPlantGrowTime(plant, ref growTime);
+    }
+
+    private static void ApplyConfiguredPlantGrowTime(Plant plant, ref float growTime)
+    {
+        if (!GrowthOverrideSystem.TryGetPlantRule(
+                plant,
+                out GrowthOverrideSystem.ResolvedPlantRule rule) ||
+            !rule.HasGrowTimeOverride)
+        {
+            return;
+        }
+
+        UnityEngine.Random.State randomState = UnityEngine.Random.state;
+        float seedFraction;
+        try
+        {
+            UnityEngine.Random.InitState(plant.m_seed);
+            seedFraction = UnityEngine.Random.value;
+        }
+        finally
+        {
+            UnityEngine.Random.state = randomState;
+        }
+
+        growTime = Mathf.Lerp(rule.GrowSecondsMin, rule.GrowSecondsMax, seedFraction);
     }
 
     private static void TryModifyPlanterGrowTime(Plant plant, ref float growTime)
@@ -470,32 +616,6 @@ internal static class FarmingSkillSystem
         return effectList != null && effectList.HasEffects();
     }
 
-    private static EffectList CloneEffectList(EffectList source)
-    {
-        EffectList.EffectData[] sourceEffects = source.m_effectPrefabs ?? [];
-        EffectList.EffectData[] clonedEffects = new EffectList.EffectData[sourceEffects.Length];
-        for (int i = 0; i < sourceEffects.Length; i++)
-        {
-            EffectList.EffectData sourceEffect = sourceEffects[i];
-            clonedEffects[i] = new EffectList.EffectData
-            {
-                m_prefab = sourceEffect.m_prefab,
-                m_enabled = sourceEffect.m_enabled,
-                m_variant = sourceEffect.m_variant,
-                m_attach = sourceEffect.m_attach,
-                m_follow = sourceEffect.m_follow,
-                m_inheritParentRotation = sourceEffect.m_inheritParentRotation,
-                m_inheritParentScale = sourceEffect.m_inheritParentScale,
-                m_multiplyParentVisualScale = sourceEffect.m_multiplyParentVisualScale,
-                m_randomRotation = sourceEffect.m_randomRotation,
-                m_scale = sourceEffect.m_scale,
-                m_childTransform = sourceEffect.m_childTransform
-            };
-        }
-
-        return new EffectList { m_effectPrefabs = clonedEffects };
-    }
-
     private static float ResolveSenderFarmingSkill(long sender)
     {
         foreach (Player player in Player.GetAllPlayers())
@@ -581,9 +701,31 @@ internal static class FarmingSkillSystem
 [HarmonyPatch(typeof(Pickable), nameof(Pickable.Interact))]
 internal static class PickableInteractForagingPickupPatch
 {
-    private static void Postfix(Pickable __instance, Humanoid character)
+    [HarmonyPriority(Priority.Last)]
+    private static void Prefix(
+        Pickable __instance,
+        Humanoid character,
+        out FarmingSkillSystem.PickableInteractFarmingState? __state)
     {
+        __state = FarmingSkillSystem.BeginFarmingInteract(__instance, character);
+    }
+
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(
+        Pickable __instance,
+        Humanoid character,
+        FarmingSkillSystem.PickableInteractFarmingState? __state)
+    {
+        __state?.Restore();
         FarmingSkillSystem.TryPickupNearbyForagingTargets(__instance, character);
+    }
+
+    private static Exception? Finalizer(
+        FarmingSkillSystem.PickableInteractFarmingState? __state,
+        Exception? __exception)
+    {
+        __state?.Restore();
+        return __exception;
     }
 }
 

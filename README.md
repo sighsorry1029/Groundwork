@@ -43,7 +43,7 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
 
 ### Foraging
 
-- Edible respawning pickables, such as berry bushes, can be affected by Farming skill.
+- Edible respawning pickables, plus prefabs registered in `BepInEx/config/Groundwork/pickables.yml`, can be affected by Farming skill.
 - Higher Farming skill can increase nearby pickup range.
 - Higher Farming skill can speed up foraging respawn.
 - Rain can speed up foraging respawn while the current environment is wet.
@@ -64,7 +64,7 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
 
 ### Terrain Tools
 
-- `Groundwork.yml` controls Hoe and Cultivator piece costs and adjustable terrain ranges.
+- `BepInEx/config/Groundwork/Groundwork.yml` controls Hoe and Cultivator piece costs and adjustable terrain ranges.
 - Hold the tool wheel modifier hotkey and use the mouse wheel to adjust terrain range.
 - Preview mode can be vanilla ghost scaling or an exact grid preview.
 - Paved Road can optionally skip vanilla smooth-height behavior.
@@ -81,7 +81,7 @@ Groundwork adds compact hover information to:
 
 ## Groundwork.yml
 
-`Groundwork.yml` defines terrain tool piece costs and adjustable ranges.
+`BepInEx/config/Groundwork/Groundwork.yml` defines terrain tool piece costs and adjustable ranges.
 
 Example:
 
@@ -135,7 +135,55 @@ For `Pickaxe: terrainDig`, min and default scale are fixed at `1`. Use `range.en
 
 Specific pickaxe prefab blocks, such as `PickaxeBlackMetal: terrainDig`, override only the values they specify. Missing values fall back to the generic `Pickaxe: terrainDig` block, and an exact block can set `range.enabled: true` or `false` independently.
 
-On multiplayer, the server's `Groundwork.yml` is synced to clients.
+On multiplayer, the server's `BepInEx/config/Groundwork/Groundwork.yml` is synced to clients.
+
+## Pickable and Plant overrides
+
+Groundwork keeps each growth domain in a separate file under `BepInEx/config/Groundwork/`:
+
+- `pickables.reference.yml`: generated Pickable values, grouped by the prefab's original provider.
+- `pickables.yml`: editable Pickable and Farming overrides.
+- `plants.reference.yml`: generated Plant values, grouped by the prefab's original provider.
+- `plants.yml`: editable Plant grow-time overrides.
+
+Each override file is a root YAML sequence, not a `pickables:` or `plants:` mapping. Groundwork creates `pickables.yml` with `Pickable_Dandelion` and `Pickable_Thistle` registered as Farming targets:
+
+```yaml
+- prefab: Pickable_Dandelion
+  farming: [true, true, 0.25, 1]
+- prefab: Pickable_Thistle
+  farming: [true, true, 0.25, 1]
+```
+
+`plants.yml` starts as an empty root sequence:
+
+```yaml
+[]
+```
+
+Copy only the entries you want to change from the corresponding generated reference. For example, a Plant override can be written as:
+
+```yaml
+- prefab: Beech_Sapling, 3000~5000
+```
+
+Tuple schema:
+
+- Pickable: `prefab: <prefab>[, <respawnMinutes>]`. The optional positive second value replaces a Pickable's base respawn time. Omitting it keeps the live value; a live value of `0` cannot be made respawning by this overlay.
+- Farming: `farming: [foragingTarget, bonusYield, maxChanceAtLevel100, bonusAmount]`. When present, the tuple has exactly four positions; use `null` to preserve automatic/live behavior in a position.
+- Plant: `prefab: <prefab>, <growSecondsMin>~<growSecondsMax>`. Both values are positive seconds and the maximum must be at least the minimum.
+- `foragingTarget`: `true` opts in to range/scythe harvesting, Farming respawn scaling, pollination, rain effects, hover info, and missing bonus-effect fallback; `false` opts out; `null` keeps automatic edible-pickable detection.
+- `bonusYield`: `true` opts in to Valheim's Farming skill gain and bonus-yield roll. `false` or `null` does not add behavior and never disables a prefab's native Farming bonus.
+- `maxChanceAtLevel100`: bonus probability at Farming 100, from `0` to `1`.
+- `bonusAmount`: additional items on a successful roll.
+
+On a successful configured or native Farming bonus roll, Groundwork temporarily supplies fallback VFX/SFX when the Pickable's `m_bonusEffect` is empty. This includes vanilla Farming pickables such as `RaspberryBush` and configured targets such as Dandelion.
+
+Omitted Pickable times and `null` Farming positions use live prefab values, including values supplied by mods such as PlantEverything. Explicit times form the base before Farming, pollination, and rain multipliers.
+
+On each reload, Groundwork reads and validates both `pickables.yml` and `plants.yml` before replacing either in-memory rule set. If either file is invalid, Groundwork keeps the last-known-good rules from both files. On multiplayer, the server synchronizes the normalized pair to clients; the generated owner-grouped reference files remain local to the server or single-player source of truth.
+
+The root-sequence compact tuple schema is the only accepted growth schema. Groundwork does not read, parse, or migrate previous root-level YAML files or the unreleased combined/expanded Growth layouts.
 
 ## Notes
 
@@ -145,4 +193,5 @@ On multiplayer, the server's `Groundwork.yml` is synced to clients.
 - Dedicated servers may not have precise per-position weather history.
 - Groundwork does not write transient pollination multipliers to ZDOs.
 - ZenBeehive beehive containers are supported: honey removed from the container counts as beehive harvest for Farming skill gain and capacity ownership.
-- `Groundwork.yml` is created automatically if missing.
+- `BepInEx/config/Groundwork/Groundwork.yml`, `pickables.yml`, and `plants.yml` are created automatically if missing.
+- `pickables.reference.yml` and `plants.reference.yml` are checked after each world prefab load and rewritten only when their settled content differs.

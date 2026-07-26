@@ -21,7 +21,7 @@ namespace Groundwork;
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.0.8";
+    internal const string ModVersion = "1.0.9";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
@@ -30,7 +30,9 @@ public class GroundworkPlugin : BaseUnityPlugin
     private const string SyncedTerrainToolsYamlIdentifier = "groundwork_yaml";
     private const float YamlReloadDebounceSeconds = 0.35f;
 
-    private static readonly string TerrainToolsYamlFilePath = Path.Combine(Paths.ConfigPath, TerrainToolsYamlFileName);
+    internal static readonly string YamlConfigDirectoryPath = Path.Combine(Paths.ConfigPath, ModName);
+    private static readonly string TerrainToolsYamlFilePath =
+        Path.Combine(YamlConfigDirectoryPath, TerrainToolsYamlFileName);
     private static CustomSyncedValue<string>? _syncedTerrainToolsYaml;
     private static IReadOnlyList<NormalizedTerrainToolConfig> _terrainTools = Array.Empty<NormalizedTerrainToolConfig>();
     private static bool _suppressSyncedYamlChanged;
@@ -78,7 +80,8 @@ public class GroundworkPlugin : BaseUnityPlugin
         Settings.Bind(this);
         _ = ConfigSync.AddLockingConfigEntry(Settings.General.LockConfiguration);
         InitializeSyncedYamlValue();
-        GroundworkConfigLoader.EnsureLocalFileExists(Paths.ConfigPath, TerrainToolsYamlFilePath);
+        GrowthOverrideSystem.Initialize(this, ConfigSync);
+        GroundworkConfigLoader.EnsureLocalFileExists(YamlConfigDirectoryPath, TerrainToolsYamlFilePath);
         RefreshYamlAuthorityMode(force: true);
 
         Assembly assembly = Assembly.GetExecutingAssembly();
@@ -91,6 +94,7 @@ public class GroundworkPlugin : BaseUnityPlugin
     public void OnDestroy()
     {
         RunShutdownStep("Harmony patches", _harmony.UnpatchSelf);
+        RunShutdownStep(nameof(GrowthOverrideSystem), GrowthOverrideSystem.Shutdown);
         RunShutdownStep(nameof(MassPlantingSystem), MassPlantingSystem.Shutdown);
         RunShutdownStep(nameof(TerrainToolRangeSystem), TerrainToolRangeSystem.Shutdown);
         RunShutdownStep(nameof(PickaxeTerrainScalingSystem), PickaxeTerrainScalingSystem.Shutdown);
@@ -145,6 +149,7 @@ public class GroundworkPlugin : BaseUnityPlugin
     internal static void TryApplyPendingConfig()
     {
         Instance?.RefreshYamlAuthorityMode();
+        GrowthOverrideSystem.RefreshAuthority();
     }
 
     private void SetupWatcher()
@@ -154,8 +159,8 @@ public class GroundworkPlugin : BaseUnityPlugin
             return;
         }
 
-        Directory.CreateDirectory(Paths.ConfigPath);
-        _watcher = new FileSystemWatcher(Paths.ConfigPath, TerrainToolsYamlFileName);
+        Directory.CreateDirectory(YamlConfigDirectoryPath);
+        _watcher = new FileSystemWatcher(YamlConfigDirectoryPath, TerrainToolsYamlFileName);
         _watcher.Changed += OnYamlFileChanged;
         _watcher.Created += OnYamlFileChanged;
         _watcher.Renamed += OnYamlFileChanged;
@@ -208,7 +213,7 @@ public class GroundworkPlugin : BaseUnityPlugin
             return;
         }
 
-        GroundworkConfigLoader.EnsureLocalFileExists(Paths.ConfigPath, TerrainToolsYamlFilePath);
+        GroundworkConfigLoader.EnsureLocalFileExists(YamlConfigDirectoryPath, TerrainToolsYamlFilePath);
         string yamlText = File.ReadAllText(TerrainToolsYamlFilePath);
         if (_syncedTerrainToolsYaml != null)
         {
@@ -387,10 +392,10 @@ public class GroundworkPlugin : BaseUnityPlugin
             MassPlantSkillGainFactor = plugin.config(massPlantingGroup, "Mass Plant Skill Gain Factor", 0.5f, new ConfigDescription("Additional Farming skill gain for mass planting. Vanilla grants one build-skill raise for the click; this adds (extra planted crops * factor). 0 keeps only the vanilla one-click skill gain.", new AcceptableValueRange<float>(0f, 5f)), synchronizedSetting: true);
 
             PlantGrowSpeedFactor = plugin.config(plantsAndForagingGroup, "Plant Grow Speed Factor", 2.5f, new ConfigDescription("Grow speed factor at Farming skill 100 for placed Plant prefabs. Newly planted crops store the planter's Farming skill. 0 disables this feature.", new AcceptableValueRange<float>(0f, 10f)), synchronizedSetting: true);
-            ForagingPickupMaxRange = plugin.config(plantsAndForagingGroup, "Foraging Pickup Max Range", 5f, new ConfigDescription("Maximum nearby pickup range in meters at Farming skill 100 for foraging-style pickables. Targets must have respawnTimeMinutes > 0 and drop edible food. 0 disables this feature.", new AcceptableValueRange<float>(0f, 10f)), synchronizedSetting: true);
-            ForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Foraging Respawn Speed Factor", 5f, new ConfigDescription("Respawn speed factor at Farming skill 100 for foraging-style pickables. Targets must have respawnTimeMinutes > 0 and drop edible food. 0 disables this feature.", new AcceptableValueRange<float>(0f, 20f)), synchronizedSetting: true);
+            ForagingPickupMaxRange = plugin.config(plantsAndForagingGroup, "Foraging Pickup Max Range", 5f, new ConfigDescription("Maximum nearby pickup range in meters at Farming skill 100 for foraging-style pickables. Targets need a positive base respawn time and must either drop edible food or be explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 0 disables this feature.", new AcceptableValueRange<float>(0f, 10f)), synchronizedSetting: true);
+            ForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Foraging Respawn Speed Factor", 5f, new ConfigDescription("Respawn speed factor at Farming skill 100 for foraging-style pickables. Targets need a positive base respawn time and must either drop edible food or be explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 0 disables this feature.", new AcceptableValueRange<float>(0f, 20f)), synchronizedSetting: true);
             WetEnvironmentPlantGrowSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Plant Grow Speed Factor", 2f, new ConfigDescription("Plant growth speed factor while the current environment is wet. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
-            WetEnvironmentForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Foraging Respawn Speed Factor", 2f, new ConfigDescription("Foraging respawn speed factor while the current environment is wet. Applies to respawning edible pickables such as berry bushes. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
+            WetEnvironmentForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Foraging Respawn Speed Factor", 2f, new ConfigDescription("Foraging respawn speed factor while the current environment is wet. Applies to automatic edible targets and prefabs explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
 
             BeehiveCapacityFarmingLevelsPerBonusHoney = plugin.config(beehivesGroup, "Beehive Capacity Farming Levels Per Bonus Honey", 20, new ConfigDescription("Farming levels required for each +1 beehive honey capacity. 0 disables the capacity bonus.", new AcceptableValueRange<int>(0, 100)), synchronizedSetting: true);
             BeehiveFarmingSkillGainPerHoney = plugin.config(beehivesGroup, "Beehive Farming Skill Gain Per Honey", 0.25f, new ConfigDescription("Farming skill gain for each honey harvested from a beehive. 0 disables this bonus.", new AcceptableValueRange<float>(0f, 5f)), synchronizedSetting: true);

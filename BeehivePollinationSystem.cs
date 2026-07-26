@@ -119,6 +119,12 @@ internal static class BeehivePollinationSystem
         _reportedAssignmentSearchSaturation = false;
     }
 
+    internal static void InvalidateTargetCaches()
+    {
+        PollinationCaches.Clear();
+        AssignmentCaches.Clear();
+    }
+
     // Beehive hover text and harvest bookkeeping.
     internal static void AppendHoverText(Beehive beehive, ref string hoverText)
     {
