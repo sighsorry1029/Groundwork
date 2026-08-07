@@ -1692,7 +1692,11 @@ internal static class MassPlantingSystem
             return PlacementFailure.NeedDirt;
         }
 
-        if (piece.m_onlyInBiome != Heightmap.Biome.None && (Heightmap.FindBiome(position) & piece.m_onlyInBiome) == 0)
+        if (!GrowthOverrideSystem.IsPlantBiomeAllowed(
+                plant,
+                piece.m_onlyInBiome,
+                heightmap,
+                position))
         {
             return PlacementFailure.WrongBiome;
         }

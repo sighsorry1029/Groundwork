@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.10
+
+- Added optional Plant biome overrides to `plants.yml`, applying the same allowed-biome list to cultivator placement, mass planting, and planted-crop health checks while leaving other growth requirements unchanged.
+- Added Expand World Data compatibility for biome names and effective nature groups, with unresolved custom names safely preserving live restrictions until EWD's synchronized biome map is available.
+- Added live Plant growth biome masks to `plants.reference.yml`, including an inline warning when a cultivator placement mask differs from the reported Plant mask.
+- Fixed beehive honey, pollination, and rain multiplier changes retroactively rewriting earlier Plant growth or foraging respawn progress; owner-authoritative progress now records loaded and unloaded rate segments and preserves them across zone reloads.
+- Updated Plant and Pickable hover countdowns to use the segmented progress calculation.
+
 ## 1.0.9
 
 - Added owner-grouped `pickables.reference.yml` and `plants.reference.yml`, with root-sequence `pickables.yml` and `plants.yml` overrides for Pickable respawn/Farming behavior and Plant grow-time ranges under `BepInEx/config/Groundwork/`.

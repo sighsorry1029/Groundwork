@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Globalization;
 using HarmonyLib;
@@ -43,8 +42,10 @@ internal static class PickableRespawnHoverSystem
             return;
         }
 
-        float remainingSeconds = Math.Max(0f, plant.GetGrowTime() - (float)plant.TimeSincePlanted());
-        if (remainingSeconds <= 0.01f)
+        if (!FarmingSkillSystem.TryGetPlantRemainingGrowthSeconds(
+                plant,
+                out float remainingSeconds) ||
+            remainingSeconds <= 0.01f)
         {
             return;
         }

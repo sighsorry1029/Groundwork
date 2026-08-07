@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using BepInEx;
 using ServerSync;
@@ -24,18 +25,34 @@ internal static class GrowthOverrideSystem
     private const string SyncedYamlIdentifier = "groundwork_growth_yaml";
     private const double ReloadDebounceMilliseconds = 350d;
     private const float SceneSettleDelaySeconds = 1f;
+    private const uint VanillaBiomeBits = 0x37Fu;
 
     private static readonly FarmingTupleYamlConverter FarmingTupleConverter = new();
+    private static readonly BiomeListYamlConverter BiomeListConverter = new();
+    private static readonly FieldInfo? PlacementGhostField = typeof(Player).GetField(
+        "m_placementGhost",
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+    private delegate bool TryGetBiomeDelegate(string name, out Heightmap.Biome biome);
+
+    private delegate Heightmap.Biome GetNatureDelegate(Heightmap.Biome biome);
+
+    private static TryGetBiomeDelegate? _expandWorldDataTryGetBiome;
+    private static GetNatureDelegate? _expandWorldDataGetNature;
+    private static bool _expandWorldDataBridgeInitialized;
+    private static bool _expandWorldDataBridgeWarningLogged;
 
     private static readonly IDeserializer Deserializer = new DeserializerBuilder()
         .WithNamingConvention(CamelCaseNamingConvention.Instance)
         .WithDuplicateKeyChecking()
         .WithTypeConverter(FarmingTupleConverter)
+        .WithTypeConverter(BiomeListConverter)
         .Build();
 
     private static readonly ISerializer Serializer = new SerializerBuilder()
         .WithNamingConvention(CamelCaseNamingConvention.Instance)
         .WithTypeConverter(FarmingTupleConverter)
+        .WithTypeConverter(BiomeListConverter)
         .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
         .DisableAliases()
         .Build();
@@ -111,16 +128,63 @@ internal static class GrowthOverrideSystem
 
     internal readonly struct ResolvedPlantRule
     {
-        internal ResolvedPlantRule(bool hasGrowTimeOverride, float growSecondsMin, float growSecondsMax)
+        internal ResolvedPlantRule(
+            bool hasGrowTimeOverride,
+            float growSecondsMin,
+            float growSecondsMax,
+            bool hasBiomeOverride,
+            Heightmap.Biome biomeMask)
         {
             HasGrowTimeOverride = hasGrowTimeOverride;
             GrowSecondsMin = growSecondsMin;
             GrowSecondsMax = growSecondsMax;
+            HasBiomeOverride = hasBiomeOverride;
+            BiomeMask = biomeMask;
         }
 
         internal readonly bool HasGrowTimeOverride;
         internal readonly float GrowSecondsMin;
         internal readonly float GrowSecondsMax;
+        internal readonly bool HasBiomeOverride;
+        internal readonly Heightmap.Biome BiomeMask;
+    }
+
+    internal readonly struct PlantBiomeOverrideState
+    {
+        internal PlantBiomeOverrideState(
+            Plant plant,
+            Heightmap.Biome originalBiome,
+            Heightmap.Biome appliedBiome)
+        {
+            Plant = plant;
+            OriginalBiome = originalBiome;
+            AppliedBiome = appliedBiome;
+        }
+
+        internal Plant? Plant { get; }
+
+        internal Heightmap.Biome OriginalBiome { get; }
+
+        internal Heightmap.Biome AppliedBiome { get; }
+    }
+
+    internal readonly struct PieceBiomeOverrideState
+    {
+        internal PieceBiomeOverrideState(
+            Piece piece,
+            Heightmap.Biome originalBiome,
+            Heightmap.Biome appliedBiome)
+        {
+            Piece = piece;
+            OriginalBiome = originalBiome;
+            AppliedBiome = appliedBiome;
+        }
+
+        internal Piece? Piece { get; }
+
+        internal Heightmap.Biome OriginalBiome { get; }
+
+        internal Heightmap.Biome AppliedBiome { get; }
     }
 
     internal static void Initialize(GroundworkPlugin owner, ConfigSync configSync)
@@ -152,6 +216,10 @@ internal static class GrowthOverrideSystem
 
         _pickableRules = new Dictionary<string, PickableGrowthOverride>(StringComparer.OrdinalIgnoreCase);
         _plantRules = new Dictionary<string, PlantGrowthOverride>(StringComparer.OrdinalIgnoreCase);
+        _expandWorldDataTryGetBiome = null;
+        _expandWorldDataGetNature = null;
+        _expandWorldDataBridgeInitialized = false;
+        _expandWorldDataBridgeWarningLogged = false;
         _lastAppliedNormalizedYaml = null;
         _scene = null;
         _owner = null;
@@ -233,11 +301,94 @@ internal static class GrowthOverrideSystem
             return false;
         }
 
+        bool hasBiomeOverride = TryResolveBiomeMask(rule, out Heightmap.Biome biomeMask);
         resolved = new ResolvedPlantRule(
-            true,
-            rule.GrowSecondsMin,
-            rule.GrowSecondsMax);
+            rule.GrowSecondsMin.HasValue && rule.GrowSecondsMax.HasValue,
+            rule.GrowSecondsMin ?? plant.m_growTime,
+            rule.GrowSecondsMax ?? plant.m_growTimeMax,
+            hasBiomeOverride,
+            biomeMask);
         return true;
+    }
+
+    internal static PlantBiomeOverrideState BeginPlantHealthBiomeOverride(Plant? plant)
+    {
+        if (plant == null ||
+            !TryGetPlantRule(plant, out ResolvedPlantRule rule) ||
+            !rule.HasBiomeOverride ||
+            plant.m_biome == rule.BiomeMask)
+        {
+            return default;
+        }
+
+        PlantBiomeOverrideState state = new(plant, plant.m_biome, rule.BiomeMask);
+        plant.m_biome = rule.BiomeMask;
+        return state;
+    }
+
+    internal static void EndPlantHealthBiomeOverride(PlantBiomeOverrideState state)
+    {
+        if (state.Plant != null && state.Plant.m_biome == state.AppliedBiome)
+        {
+            state.Plant.m_biome = state.OriginalBiome;
+        }
+    }
+
+    internal static PieceBiomeOverrideState BeginPlacementBiomeOverride(Player? player)
+    {
+        if (player == null || PlacementGhostField?.GetValue(player) is not GameObject placementGhost)
+        {
+            return default;
+        }
+
+        Piece? piece = placementGhost.GetComponent<Piece>() ??
+                       placementGhost.GetComponentInChildren<Piece>(includeInactive: true);
+        Plant? plant = placementGhost.GetComponent<Plant>() ??
+                       placementGhost.GetComponentInChildren<Plant>(includeInactive: true);
+        if (piece == null ||
+            plant == null ||
+            !TryGetPlantRule(plant, out ResolvedPlantRule rule) ||
+            !rule.HasBiomeOverride ||
+            piece.m_onlyInBiome == rule.BiomeMask)
+        {
+            return default;
+        }
+
+        PieceBiomeOverrideState state = new(piece, piece.m_onlyInBiome, rule.BiomeMask);
+        piece.m_onlyInBiome = rule.BiomeMask;
+        return state;
+    }
+
+    internal static void EndPlacementBiomeOverride(PieceBiomeOverrideState state)
+    {
+        if (state.Piece != null && state.Piece.m_onlyInBiome == state.AppliedBiome)
+        {
+            state.Piece.m_onlyInBiome = state.OriginalBiome;
+        }
+    }
+
+    internal static bool IsPlantBiomeAllowed(
+        Plant? plant,
+        Heightmap.Biome liveAllowedBiomes,
+        Heightmap? heightmap,
+        Vector3 position)
+    {
+        Heightmap.Biome allowedBiomes = liveAllowedBiomes;
+        if (TryGetPlantRule(plant, out ResolvedPlantRule rule) && rule.HasBiomeOverride)
+        {
+            allowedBiomes = rule.BiomeMask;
+        }
+
+        if (allowedBiomes == Heightmap.Biome.None)
+        {
+            return true;
+        }
+
+        Heightmap.Biome currentBiome = heightmap != null
+            ? heightmap.GetBiome(position)
+            : Heightmap.FindBiome(position);
+        currentBiome = ResolveEffectiveNature(currentBiome);
+        return (currentBiome & allowedBiomes) != 0;
     }
 
     private static bool UsesLocalAuthorityFiles()
@@ -610,38 +761,52 @@ internal static class GrowthOverrideSystem
 
         string tuple = RequireTuple(raw.Prefab, "Plant");
         string[] tupleParts = tuple.Split(new[] { ',' }, StringSplitOptions.None);
-        if (tupleParts.Length != 2)
+        if (tupleParts.Length is < 1 or > 2)
         {
             throw new InvalidDataException(
-                $"Plant prefab tuple '{tuple}' must be '<prefab>, <growSecondsMin>~<growSecondsMax>'.");
+                $"Plant prefab tuple '{tuple}' must be '<prefab>' or " +
+                "'<prefab>, <growSecondsMin>~<growSecondsMax>'.");
         }
 
         string prefab = RequirePrefab(tupleParts[0], "Plant");
-        string[] rangeParts = tupleParts[1].Split(new[] { '~' }, StringSplitOptions.None);
-        if (rangeParts.Length != 2)
+        float? growSecondsMin = null;
+        float? growSecondsMax = null;
+        if (tupleParts.Length == 2)
         {
-            throw new InvalidDataException(
-                $"Plant '{prefab}' grow-time range must be '<growSecondsMin>~<growSecondsMax>'.");
+            string[] rangeParts = tupleParts[1].Split(new[] { '~' }, StringSplitOptions.None);
+            if (rangeParts.Length != 2)
+            {
+                throw new InvalidDataException(
+                    $"Plant '{prefab}' grow-time range must be '<growSecondsMin>~<growSecondsMax>'.");
+            }
+
+            growSecondsMin = ParsePositiveFloat(
+                rangeParts[0],
+                $"Plant '{prefab}' growSecondsMin");
+            growSecondsMax = ParsePositiveFloat(
+                rangeParts[1],
+                $"Plant '{prefab}' growSecondsMax");
+
+            if (growSecondsMax < growSecondsMin)
+            {
+                throw new InvalidDataException(
+                    $"Plant '{prefab}' growSecondsMax must be greater than or equal to growSecondsMin.");
+            }
         }
 
-        float growSecondsMin = ParsePositiveFloat(
-            rangeParts[0],
-            $"Plant '{prefab}' growSecondsMin");
-        float growSecondsMax = ParsePositiveFloat(
-            rangeParts[1],
-            $"Plant '{prefab}' growSecondsMax");
-
-        if (growSecondsMax < growSecondsMin)
+        PlantBiomeList? biomes = NormalizeBiomeList(raw.Biomes, prefab);
+        if (!growSecondsMin.HasValue && biomes == null)
         {
             throw new InvalidDataException(
-                $"Plant '{prefab}' growSecondsMax must be greater than or equal to growSecondsMin.");
+                $"Plant '{prefab}' must override grow time, biomes, or both.");
         }
 
         return new PlantGrowthOverride
         {
             Prefab = prefab,
             GrowSecondsMin = growSecondsMin,
-            GrowSecondsMax = growSecondsMax
+            GrowSecondsMax = growSecondsMax,
+            Biomes = biomes
         };
     }
 
@@ -658,9 +823,60 @@ internal static class GrowthOverrideSystem
     {
         return new PlantGrowthEntry
         {
-            Prefab =
-                $"{entry.Prefab}, {FormatFloat(entry.GrowSecondsMin)}~{FormatFloat(entry.GrowSecondsMax)}"
+            Prefab = entry.GrowSecondsMin.HasValue && entry.GrowSecondsMax.HasValue
+                ? $"{entry.Prefab}, {FormatFloat(entry.GrowSecondsMin.Value)}~{FormatFloat(entry.GrowSecondsMax.Value)}"
+                : entry.Prefab,
+            Biomes = entry.Biomes
         };
+    }
+
+    private static PlantBiomeList? NormalizeBiomeList(PlantBiomeList? raw, string prefab)
+    {
+        if (raw == null)
+        {
+            return null;
+        }
+
+        if (raw.Names == null || raw.Names.Count == 0)
+        {
+            throw new InvalidDataException(
+                $"Plant '{prefab}' biomes must contain at least one biome name.");
+        }
+
+        List<string> names = new(raw.Names.Count);
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string? rawName in raw.Names)
+        {
+            string name = (rawName ?? "").Trim();
+            if (name.Length == 0 || name.Any(char.IsControl))
+            {
+                throw new InvalidDataException(
+                    $"Plant '{prefab}' biome names must be non-empty and cannot contain control characters.");
+            }
+
+            if (name.Equals(nameof(Heightmap.Biome.None), StringComparison.OrdinalIgnoreCase) ||
+                name.Equals(nameof(Heightmap.Biome.All), StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    $"Plant '{prefab}' biome '{name}' is not supported; list explicit biome names instead.");
+            }
+
+            if (long.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            {
+                throw new InvalidDataException(
+                    $"Plant '{prefab}' biome values must use names, not numeric masks.");
+            }
+
+            if (!seen.Add(name))
+            {
+                throw new InvalidDataException(
+                    $"Plant '{prefab}' contains duplicate biome name '{name}'.");
+            }
+
+            names.Add(name);
+        }
+
+        return new PlantBiomeList { Names = names };
     }
 
     private static string FormatPickableTuple(PickableGrowthOverride entry)
@@ -714,6 +930,209 @@ internal static class GrowthOverrideSystem
         }
 
         return parsed;
+    }
+
+    private static bool TryResolveBiomeMask(
+        PlantGrowthOverride rule,
+        out Heightmap.Biome biomeMask)
+    {
+        biomeMask = Heightmap.Biome.None;
+        if (rule.Biomes?.Names == null)
+        {
+            return false;
+        }
+
+        foreach (string name in rule.Biomes.Names)
+        {
+            if (!TryResolveBiomeName(name, out Heightmap.Biome resolved))
+            {
+                WarnUnresolvedBiome(
+                    rule,
+                    name,
+                    "the name is unknown or Expand World Data has not finished loading its biome map");
+                biomeMask = Heightmap.Biome.None;
+                return false;
+            }
+
+            if (!IsSingleBiomeBit(resolved))
+            {
+                WarnUnresolvedBiome(
+                    rule,
+                    name,
+                    "the name does not resolve to one biome");
+                biomeMask = Heightmap.Biome.None;
+                return false;
+            }
+
+            Heightmap.Biome effective = resolved;
+            EnsureExpandWorldDataBridge();
+            if (_expandWorldDataGetNature != null
+                    ? !TryGetExpandWorldDataNature(resolved, out effective)
+                    : !IsVanillaBiomeBit(resolved))
+            {
+                WarnUnresolvedBiome(
+                    rule,
+                    name,
+                    "its Expand World Data nature could not be resolved");
+                biomeMask = Heightmap.Biome.None;
+                return false;
+            }
+
+            if (effective == Heightmap.Biome.None)
+            {
+                WarnUnresolvedBiome(
+                    rule,
+                    name,
+                    "its effective Expand World Data nature is None");
+                biomeMask = Heightmap.Biome.None;
+                return false;
+            }
+
+            biomeMask |= effective;
+        }
+
+        return biomeMask != Heightmap.Biome.None;
+    }
+
+    private static bool TryResolveBiomeName(string name, out Heightmap.Biome biome)
+    {
+        EnsureExpandWorldDataBridge();
+        if (_expandWorldDataTryGetBiome != null)
+        {
+            try
+            {
+                if (_expandWorldDataTryGetBiome(name, out biome))
+                {
+                    return true;
+                }
+            }
+            catch (Exception exception)
+            {
+                LogExpandWorldDataBridgeWarning(exception);
+            }
+        }
+
+        return Enum.TryParse(name, ignoreCase: true, out biome);
+    }
+
+    private static Heightmap.Biome ResolveEffectiveNature(Heightmap.Biome biome)
+    {
+        return TryGetExpandWorldDataNature(biome, out Heightmap.Biome nature)
+            ? nature
+            : biome;
+    }
+
+    private static bool TryGetExpandWorldDataNature(
+        Heightmap.Biome biome,
+        out Heightmap.Biome nature)
+    {
+        EnsureExpandWorldDataBridge();
+        if (_expandWorldDataGetNature != null)
+        {
+            try
+            {
+                nature = _expandWorldDataGetNature(biome);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                LogExpandWorldDataBridgeWarning(exception);
+            }
+        }
+
+        nature = biome;
+        return false;
+    }
+
+    private static void EnsureExpandWorldDataBridge()
+    {
+        if (_expandWorldDataBridgeInitialized)
+        {
+            return;
+        }
+
+        _expandWorldDataBridgeInitialized = true;
+        Type? managerType = Type.GetType(
+            "ExpandWorldData.BiomeManager, ExpandWorldData",
+            throwOnError: false);
+        if (managerType == null)
+        {
+            return;
+        }
+
+        try
+        {
+            MethodInfo? tryGetBiomeMethod = managerType.GetMethod(
+                "TryGetBiome",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: [typeof(string), typeof(Heightmap.Biome).MakeByRefType()],
+                modifiers: null);
+            MethodInfo? getNatureMethod = managerType.GetMethod(
+                "GetNature",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: [typeof(Heightmap.Biome)],
+                modifiers: null);
+            if (tryGetBiomeMethod == null || getNatureMethod == null)
+            {
+                LogExpandWorldDataBridgeWarning(
+                    new MissingMethodException(
+                        "ExpandWorldData.BiomeManager.TryGetBiome/GetNature was not found."));
+                return;
+            }
+
+            _expandWorldDataTryGetBiome = (TryGetBiomeDelegate)tryGetBiomeMethod.CreateDelegate(
+                typeof(TryGetBiomeDelegate));
+            _expandWorldDataGetNature = (GetNatureDelegate)getNatureMethod.CreateDelegate(
+                typeof(GetNatureDelegate));
+        }
+        catch (Exception exception)
+        {
+            LogExpandWorldDataBridgeWarning(exception);
+        }
+    }
+
+    private static void LogExpandWorldDataBridgeWarning(Exception exception)
+    {
+        if (_expandWorldDataBridgeWarningLogged)
+        {
+            return;
+        }
+
+        _expandWorldDataBridgeWarningLogged = true;
+        GroundworkPlugin.ModLogger.LogWarning(
+            "Expand World Data biome compatibility is unavailable; " +
+            "Groundwork will preserve live biome restrictions for unresolved custom names. " +
+            exception.GetBaseException().Message);
+    }
+
+    private static void WarnUnresolvedBiome(
+        PlantGrowthOverride rule,
+        string name,
+        string reason)
+    {
+        rule.WarnedUnresolvedBiomes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!rule.WarnedUnresolvedBiomes.Add(name))
+        {
+            return;
+        }
+
+        GroundworkPlugin.ModLogger.LogWarning(
+            $"Plant '{rule.Prefab}' biome override is not active because '{name}' could not be used: {reason}. " +
+            "The complete biome list will be retried and live placement/growth restrictions remain unchanged meanwhile.");
+    }
+
+    private static bool IsSingleBiomeBit(Heightmap.Biome biome)
+    {
+        uint bits = unchecked((uint)(int)biome);
+        return bits != 0 && (bits & (bits - 1)) == 0;
+    }
+
+    private static bool IsVanillaBiomeBit(Heightmap.Biome biome)
+    {
+        uint bits = unchecked((uint)(int)biome);
+        return IsSingleBiomeBit(biome) && (bits & VanillaBiomeBits) == bits;
     }
 
     private sealed class FarmingTupleYamlConverter : IYamlTypeConverter
@@ -909,6 +1328,78 @@ internal static class GrowthOverrideSystem
         }
     }
 
+    private sealed class BiomeListYamlConverter : IYamlTypeConverter
+    {
+        public bool Accepts(Type type)
+        {
+            return type == typeof(PlantBiomeList);
+        }
+
+        public object ReadYaml(
+            IParser parser,
+            Type type,
+            ObjectDeserializer rootDeserializer)
+        {
+            SequenceStart start = parser.Consume<SequenceStart>();
+            if (start.Style != SequenceStyle.Flow)
+            {
+                throw new InvalidDataException(
+                    "biomes must be a flow list such as [Mistlands, Meadows].");
+            }
+
+            if (!start.Anchor.IsEmpty || !start.Tag.IsEmpty)
+            {
+                throw new InvalidDataException("biomes cannot use YAML anchors or tags.");
+            }
+
+            List<string> names = [];
+            while (!parser.Accept<SequenceEnd>(out _))
+            {
+                Scalar scalar = parser.Consume<Scalar>();
+                if (!scalar.Anchor.IsEmpty || !scalar.Tag.IsEmpty)
+                {
+                    throw new InvalidDataException(
+                        "biome names cannot use YAML anchors or tags.");
+                }
+
+                names.Add(scalar.Value);
+            }
+
+            parser.Consume<SequenceEnd>();
+            return new PlantBiomeList { Names = names };
+        }
+
+        public void WriteYaml(
+            IEmitter emitter,
+            object? value,
+            Type type,
+            ObjectSerializer serializer)
+        {
+            if (value is not PlantBiomeList biomes)
+            {
+                throw new InvalidDataException("biomes value is missing.");
+            }
+
+            emitter.Emit(new SequenceStart(
+                AnchorName.Empty,
+                TagName.Empty,
+                isImplicit: true,
+                SequenceStyle.Flow));
+            foreach (string name in biomes.Names)
+            {
+                serializer(name, typeof(string));
+            }
+
+            emitter.Emit(new SequenceEnd());
+            if (biomes.ReferencePlacementBiomeMaskDiffers)
+            {
+                emitter.Emit(new Comment(
+                    "Live cultivator placement mask differs; copying biomes replaces it with this growth mask.",
+                    isInline: true));
+            }
+        }
+    }
+
     private static void AddUnique<T>(
         IDictionary<string, T> rules,
         string prefab,
@@ -1038,7 +1529,10 @@ internal static class GrowthOverrideSystem
         StringBuilder builder = new();
         builder.AppendLine($"# Generated by {GroundworkPlugin.ModName}. Do not edit this file directly.");
         builder.AppendLine($"# Copy only entries you want to change into {PlantsOverrideFileName}.");
-        builder.AppendLine("# Plant prefab tuple: <prefab>, <growSecondsMin>~<growSecondsMax>.");
+        builder.AppendLine("# Plant prefab tuple: <prefab>[, <growSecondsMin>~<growSecondsMax>].");
+        builder.AppendLine("# biomes reports the live Plant growth mask when it has stable names.");
+        builder.AppendLine("# Copying biomes explicitly applies the list to both cultivator placement and Plant health checks.");
+        builder.AppendLine("# An inline note marks entries whose live cultivator placement mask differs from the reported growth mask.");
         builder.AppendLine("# Owner headings identify the original prefab provider, not mods that later changed its fields.");
         builder.AppendLine();
         AppendReferenceEntries(builder, plants, ToDocumentEntry);
@@ -1216,11 +1710,24 @@ internal static class GrowthOverrideSystem
                 }
                 else
                 {
+                    PlantBiomeList? referenceBiomes = null;
+                    if (!TryBuildReferenceBiomeList(
+                            prefab,
+                            growingPlants,
+                            out referenceBiomes,
+                            out string biomeError))
+                    {
+                        GroundworkPlugin.ModLogger.LogWarning(
+                            $"Omitting biomes for Plant prefab '{prefabName}' from " +
+                            $"{PlantsReferenceFileName}: {biomeError}");
+                    }
+
                     plants.Add(prefabName, new PlantGrowthOverride
                     {
                         Prefab = prefabName,
                         GrowSecondsMin = plant.m_growTime,
-                        GrowSecondsMax = plant.m_growTimeMax
+                        GrowSecondsMax = plant.m_growTimeMax,
+                        Biomes = referenceBiomes
                     });
                 }
             }
@@ -1275,6 +1782,82 @@ internal static class GrowthOverrideSystem
         string prefabName = Utils.GetPrefabName(prefab);
         return !string.IsNullOrWhiteSpace(prefabName) &&
                seenNames.Add(prefabName);
+    }
+
+    private static bool TryBuildReferenceBiomeList(
+        GameObject prefab,
+        IReadOnlyList<Plant> plants,
+        out PlantBiomeList? biomes,
+        out string error)
+    {
+        biomes = null;
+        error = "";
+        if (plants.Count == 0)
+        {
+            error = "it has no growing Plant components.";
+            return false;
+        }
+
+        Heightmap.Biome referenceMask = plants[0].m_biome;
+        if (plants.Skip(1).Any(plant => plant.m_biome != referenceMask))
+        {
+            error = "its Plant components have different growth biome masks.";
+            return false;
+        }
+
+        bool placementBiomeMaskDiffers = false;
+        foreach (Plant plant in plants)
+        {
+            Piece? piece = plant.GetComponentInParent<Piece>() ??
+                           prefab.GetComponentInChildren<Piece>(includeInactive: true);
+            if (piece != null && piece.m_onlyInBiome != referenceMask)
+            {
+                placementBiomeMaskDiffers = true;
+            }
+        }
+
+        if (referenceMask == Heightmap.Biome.None)
+        {
+            error = "its live biome mask is None and cannot be represented as an allowed-name list.";
+            return false;
+        }
+
+        List<string> names = [];
+        uint remainingBits = unchecked((uint)(int)referenceMask);
+        for (uint bit = 1; bit != 0; bit <<= 1)
+        {
+            if ((remainingBits & bit) == 0)
+            {
+                continue;
+            }
+
+            Heightmap.Biome biome = (Heightmap.Biome)(int)bit;
+            string? name = Enum.GetName(typeof(Heightmap.Biome), biome);
+            if (string.IsNullOrWhiteSpace(name) ||
+                name.Equals(nameof(Heightmap.Biome.None), StringComparison.OrdinalIgnoreCase) ||
+                name.Equals(nameof(Heightmap.Biome.All), StringComparison.OrdinalIgnoreCase) ||
+                name.Any(char.IsControl))
+            {
+                error = $"biome bit {unchecked((int)bit)} has no stable name.";
+                return false;
+            }
+
+            names.Add(name);
+            remainingBits &= ~bit;
+        }
+
+        if (remainingBits != 0 || names.Count == 0)
+        {
+            error = "its biome mask could not be converted to stable names.";
+            return false;
+        }
+
+        biomes = new PlantBiomeList
+        {
+            Names = names,
+            ReferencePlacementBiomeMaskDiffers = placementBiomeMaskDiffers
+        };
+        return true;
     }
 
     private static bool HasSameReferenceValues(Pickable first, Pickable second)
@@ -1366,17 +1949,25 @@ internal static class GrowthOverrideSystem
     {
         return string.Join(Environment.NewLine, new[]
         {
-            "# Groundwork Plant grow-time overrides.",
+            "# Groundwork Plant grow-time and biome overrides.",
             $"# Copy exact prefab names and observed values from {PlantsReferenceFileName}.",
             "# This root document is a YAML sequence. Legacy mapping fields are not supported.",
             "#",
             "# Full schema:",
-            "# - prefab: <prefab>, <growSecondsMin>~<growSecondsMax> # positive seconds; max must be >= min.",
+            "# - prefab: <prefab>[, <growSecondsMin>~<growSecondsMax>] # optional positive seconds; omit the range to keep live grow time.",
+            "#   biomes: [<biome>, ...] # optional non-empty name list; applies to cultivator placement and Plant growth health.",
+            "#                              # omit biomes to keep live biome restrictions; None, All, and numeric masks are not accepted.",
+            "#                              # heat/cold, cultivated-ground, roof, and spacing checks remain unchanged.",
             "#",
-            "# Replace [] with entries to override Plant grow times.",
+            "# Replace [] with entries that override grow time, biomes, or both.",
             "[]",
-            "# Example:",
-            "# - prefab: Beech_Sapling, 3000~5000 # prefab, minimum~maximum grow seconds"
+            "# Examples:",
+            "# - prefab: Beech_Sapling, 3000~5000 # time only; keep live biome restrictions.",
+            "# - prefab: sapling_jotunpuffs # biome only; keep live grow time.",
+            "#   biomes: [Mistlands] # For an EWD custom biome with nature: Mistlands, list the vanilla nature name Mistlands rather than the custom biome name.",
+            "#                         # This allows vanilla Mistlands and every EWD custom biome in that nature group; individual members cannot be selected separately.",
+            "# - prefab: MyMod_Sapling # independent EWD custom-biome example.",
+            "#   biomes: [MyIndependentBiome] # Use the EWD `biome:` name only for an independent custom biome with no valid nature or terrain alias."
         }) + Environment.NewLine;
     }
 }
@@ -1428,6 +2019,9 @@ internal sealed class PlantGrowthEntry
 {
     [YamlMember(Order = 1)]
     public string? Prefab { get; set; }
+
+    [YamlMember(Order = 2)]
+    public PlantBiomeList? Biomes { get; set; }
 }
 
 internal sealed class PickableGrowthOverride
@@ -1454,7 +2048,18 @@ internal sealed class PlantGrowthOverride
 {
     public string Prefab { get; set; } = "";
 
-    public float GrowSecondsMin { get; set; }
+    public float? GrowSecondsMin { get; set; }
 
-    public float GrowSecondsMax { get; set; }
+    public float? GrowSecondsMax { get; set; }
+
+    public PlantBiomeList? Biomes { get; set; }
+
+    internal HashSet<string>? WarnedUnresolvedBiomes { get; set; }
+}
+
+internal sealed class PlantBiomeList
+{
+    public List<string> Names { get; set; } = [];
+
+    internal bool ReferencePlacementBiomeMaskDiffers { get; set; }
 }

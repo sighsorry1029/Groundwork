@@ -18,14 +18,16 @@ namespace Groundwork;
 [BepInPlugin(ModGUID, ModName, ModVersion)]
 [BepInDependency(JewelcraftingGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(ZenBeehiveGuid, BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency(ExpandWorldDataGuid, BepInDependency.DependencyFlags.SoftDependency)]
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.0.9";
+    internal const string ModVersion = "1.0.10";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
     private const string ZenBeehiveGuid = "ZenDragon.ZenBeehive";
+    internal const string ExpandWorldDataGuid = "expand_world_data";
     private const string TerrainToolsYamlFileName = "Groundwork.yml";
     private const string SyncedTerrainToolsYamlIdentifier = "groundwork_yaml";
     private const float YamlReloadDebounceSeconds = 0.35f;

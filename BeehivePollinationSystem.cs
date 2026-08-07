@@ -324,56 +324,51 @@ internal static class BeehivePollinationSystem
         LoadedSinceTicksByTarget[target] = ZNet.instance.GetTime().Ticks;
     }
 
-    internal static void TryModifyPlantGrowTime(Plant plant, ref float growTime)
+    internal static long GetLoadedSinceTicks(Component target)
     {
-        if (plant == null || growTime <= 0f)
-        {
-            return;
-        }
-
-        float unloadedMultiplier = GetStructuralPlantGrowthMultiplierForTarget(plant);
-        if (unloadedMultiplier > 1.001f)
-        {
-            float loadedMultiplier = GetLoadedPollinationMultiplier(unloadedMultiplier);
-            float totalElapsed = Mathf.Max(0f, (float)plant.TimeSincePlanted());
-            float catchupElapsed = GetUnloadedCatchupElapsed(plant, totalElapsed);
-            growTime = ApplyCatchupDurationMultiplier(
-                growTime,
-                loadedMultiplier,
-                unloadedMultiplier,
-                catchupElapsed);
-        }
+        return target != null && LoadedSinceTicksByTarget.TryGetValue(target, out long loadedSinceTicks)
+            ? loadedSinceTicks
+            : 0L;
     }
 
-    internal static bool TryModifyForagingRespawnSeconds(Pickable pickable, ref float respawnSeconds)
+    internal static bool IsPlantGrowthBonusConfigured()
     {
-        if (pickable == null || respawnSeconds <= 0f)
-        {
-            return false;
-        }
+        return GroundworkToolsDomain.BeehivePollinationRadius > 0f &&
+               GroundworkToolsDomain.BeehivePollinationMaxPlants > 0 &&
+               GroundworkToolsDomain.BeehivePollinationPlantGrowSpeedFactor > 1.001f;
+    }
 
-        float unloadedMultiplier = GetStructuralForagingRespawnMultiplierForTarget(pickable);
-        if (unloadedMultiplier <= 1.001f)
-        {
-            return false;
-        }
+    internal static bool IsForagingRespawnBonusConfigured()
+    {
+        return GroundworkToolsDomain.BeehivePollinationRadius > 0f &&
+               GroundworkToolsDomain.BeehivePollinationMaxPlants > 0 &&
+               GroundworkToolsDomain.BeehivePollinationForagingRespawnSpeedFactor > 1.001f;
+    }
 
-        float loadedMultiplier = GetLoadedPollinationMultiplier(unloadedMultiplier);
-        long pickedTicks = GetPickedTimeTicks(pickable);
-        float totalElapsed = pickedTicks > 0 ? GetSecondsSinceTicks(pickedTicks) : 0f;
-        float catchupElapsed = GetUnloadedCatchupElapsed(pickable, totalElapsed, pickedTicks);
-        float modifiedRespawnSeconds = ApplyCatchupDurationMultiplier(
-            respawnSeconds,
-            loadedMultiplier,
-            unloadedMultiplier,
-            catchupElapsed);
-        if (Mathf.Abs(modifiedRespawnSeconds - respawnSeconds) <= 0.001f)
-        {
-            return false;
-        }
+    internal static void GetPlantGrowthMultipliers(
+        Plant plant,
+        out float loadedMultiplier,
+        out float unloadedMultiplier)
+    {
+        float structuralMultiplier = GetStructuralPlantGrowthMultiplierForTarget(plant);
+        loadedMultiplier = GetLoadedPollinationMultiplier(structuralMultiplier) *
+                           EnvironmentEffectSystem.GetWetPlantGrowSpeedMultiplier();
+        unloadedMultiplier = ApplyUnloadedCatchupEffectiveness(structuralMultiplier);
+        loadedMultiplier = Mathf.Max(1f, loadedMultiplier);
+        unloadedMultiplier = Mathf.Max(1f, unloadedMultiplier);
+    }
 
-        respawnSeconds = modifiedRespawnSeconds;
-        return true;
+    internal static void GetForagingRespawnMultipliers(
+        Pickable pickable,
+        out float loadedMultiplier,
+        out float unloadedMultiplier)
+    {
+        float structuralMultiplier = GetStructuralForagingRespawnMultiplierForTarget(pickable);
+        loadedMultiplier = GetLoadedPollinationMultiplier(structuralMultiplier) *
+                           EnvironmentEffectSystem.GetWetForagingRespawnSpeedMultiplier(pickable);
+        unloadedMultiplier = ApplyUnloadedCatchupEffectiveness(structuralMultiplier);
+        loadedMultiplier = Mathf.Max(1f, loadedMultiplier);
+        unloadedMultiplier = Mathf.Max(1f, unloadedMultiplier);
     }
 
     internal static float GetPlantGrowthMultiplierForHover(Plant plant)
@@ -844,82 +839,6 @@ internal static class BeehivePollinationSystem
     private static float ApplyUnloadedCatchupEffectiveness(float multiplier)
     {
         return 1f + (Mathf.Max(1f, multiplier) - 1f) * UnloadedCatchupEffectiveness;
-    }
-
-    private static float ApplyCatchupDurationMultiplier(
-        float durationSeconds,
-        float loadedMultiplier,
-        float unloadedMultiplier,
-        float catchupElapsedSeconds)
-    {
-        if (durationSeconds <= 0f)
-        {
-            return durationSeconds;
-        }
-
-        float loadedRate = Mathf.Max(1f, loadedMultiplier);
-        float catchupElapsed = Mathf.Max(0f, catchupElapsedSeconds);
-        if (catchupElapsed <= 0.001f)
-        {
-            return durationSeconds / loadedRate;
-        }
-
-        float catchupMultiplier = ApplyUnloadedCatchupEffectiveness(unloadedMultiplier);
-        float remainingProgress = durationSeconds - catchupElapsed * catchupMultiplier;
-        if (remainingProgress <= 0f)
-        {
-            return Mathf.Max(0f, catchupElapsed - 0.001f);
-        }
-
-        return catchupElapsed + remainingProgress / loadedRate;
-    }
-
-    private static float GetUnloadedCatchupElapsed(Component target, float totalElapsedSeconds, long eventStartTicks = 0L)
-    {
-        if (target == null || ZNet.instance == null || totalElapsedSeconds <= 0f)
-        {
-            return 0f;
-        }
-
-        long nowTicks = ZNet.instance.GetTime().Ticks;
-        if (!LoadedSinceTicksByTarget.TryGetValue(target, out long loadedSinceTicks))
-        {
-            loadedSinceTicks = nowTicks;
-            LoadedSinceTicksByTarget[target] = loadedSinceTicks;
-        }
-
-        if (eventStartTicks > 0L)
-        {
-            loadedSinceTicks = Math.Max(loadedSinceTicks, eventStartTicks);
-        }
-
-        float loadedElapsed = GetSecondsBetweenTicks(loadedSinceTicks, nowTicks);
-        loadedElapsed = Mathf.Clamp(loadedElapsed, 0f, totalElapsedSeconds);
-        return Mathf.Max(0f, totalElapsedSeconds - loadedElapsed);
-    }
-
-    private static float GetSecondsSinceTicks(long ticks)
-    {
-        return ZNet.instance != null
-            ? GetSecondsBetweenTicks(ticks, ZNet.instance.GetTime().Ticks)
-            : 0f;
-    }
-
-    private static float GetSecondsBetweenTicks(long startTicks, long endTicks)
-    {
-        if (startTicks <= 0L || endTicks <= startTicks)
-        {
-            return 0f;
-        }
-
-        return (float)Math.Max(0.0, TimeSpan.FromTicks(endTicks - startTicks).TotalSeconds);
-    }
-
-    private static long GetPickedTimeTicks(Pickable pickable)
-    {
-        ZNetView? nview = pickable != null ? pickable.GetComponent<ZNetView>() : null;
-        ZDO? zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
-        return zdo?.GetLong(ZDOVars.s_pickedTime, 0L) ?? 0L;
     }
 
     private static float GetHivePlantGrowthMultiplier(Beehive beehive)

@@ -70,30 +70,4 @@ internal static class EnvironmentEffectSystem
         }
     }
 
-    internal static void TryModifyPlantGrowTime(Plant plant, ref float growTime)
-    {
-        float speedFactor = GetWetPlantGrowSpeedMultiplier();
-        if (plant == null ||
-            growTime <= 0f ||
-            speedFactor <= 1.001f)
-        {
-            return;
-        }
-
-        growTime /= speedFactor;
-    }
-
-    internal static bool TryModifyForagingRespawnSeconds(Pickable pickable, ref float respawnSeconds)
-    {
-        float speedFactor = GetWetForagingRespawnSpeedMultiplier(pickable);
-        if (pickable == null ||
-            respawnSeconds <= 0f ||
-            speedFactor <= 1.001f)
-        {
-            return false;
-        }
-
-        respawnSeconds /= speedFactor;
-        return true;
-    }
 }

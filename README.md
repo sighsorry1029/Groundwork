@@ -144,7 +144,7 @@ Groundwork keeps each growth domain in a separate file under `BepInEx/config/Gro
 - `pickables.reference.yml`: generated Pickable values, grouped by the prefab's original provider.
 - `pickables.yml`: editable Pickable and Farming overrides.
 - `plants.reference.yml`: generated Plant values, grouped by the prefab's original provider.
-- `plants.yml`: editable Plant grow-time overrides.
+- `plants.yml`: editable Plant grow-time and allowed-biome overrides.
 
 Each override file is a root YAML sequence, not a `pickables:` or `plants:` mapping. Groundwork creates `pickables.yml` with `Pickable_Dandelion` and `Pickable_Thistle` registered as Farming targets:
 
@@ -165,13 +165,17 @@ Copy only the entries you want to change from the corresponding generated refere
 
 ```yaml
 - prefab: Beech_Sapling, 3000~5000
+- prefab: sapling_jotunpuffs
+  biomes: [Mistlands, Meadows]
 ```
 
 Tuple schema:
 
 - Pickable: `prefab: <prefab>[, <respawnMinutes>]`. The optional positive second value replaces a Pickable's base respawn time. Omitting it keeps the live value; a live value of `0` cannot be made respawning by this overlay.
 - Farming: `farming: [foragingTarget, bonusYield, maxChanceAtLevel100, bonusAmount]`. When present, the tuple has exactly four positions; use `null` to preserve automatic/live behavior in a position.
-- Plant: `prefab: <prefab>, <growSecondsMin>~<growSecondsMax>`. Both values are positive seconds and the maximum must be at least the minimum.
+- Plant: `prefab: <prefab>[, <growSecondsMin>~<growSecondsMax>]`. The optional values are positive seconds and the maximum must be at least the minimum. Omitting the range keeps the live grow time.
+- Plant biomes: `biomes: [<biome>, ...]` applies one non-empty list of biome names to both cultivator placement and the planted crop's health check. Omitting it keeps the live restrictions. `None`, `All`, and numeric masks are rejected.
+- `plants.reference.yml` reports the live Plant growth mask. An inline note marks entries whose live cultivator placement mask differs, because copying `biomes` also replaces that placement mask.
 - `foragingTarget`: `true` opts in to range/scythe harvesting, Farming respawn scaling, pollination, rain effects, hover info, and missing bonus-effect fallback; `false` opts out; `null` keeps automatic edible-pickable detection.
 - `bonusYield`: `true` opts in to Valheim's Farming skill gain and bonus-yield roll. `false` or `null` does not add behavior and never disables a prefab's native Farming bonus.
 - `maxChanceAtLevel100`: bonus probability at Farming 100, from `0` to `1`.
@@ -179,7 +183,11 @@ Tuple schema:
 
 On a successful configured or native Farming bonus roll, Groundwork temporarily supplies fallback VFX/SFX when the Pickable's `m_bonusEffect` is empty. This includes vanilla Farming pickables such as `RaspberryBush` and configured targets such as Dandelion.
 
-Omitted Pickable times and `null` Farming positions use live prefab values, including values supplied by mods such as PlantEverything. Explicit times form the base before Farming, pollination, and rain multipliers.
+Omitted Pickable/Plant times, omitted Plant biomes, and `null` Farming positions use live prefab values, including values supplied by mods such as PlantEverything. Explicit times form the base before Farming, pollination, and rain multipliers.
+
+Expand World Data custom biome names are resolved after EWD's synchronized biome map is available. A custom biome configured with `nature: Mistlands` participates in Plant checks as Mistlands, so it belongs to the same effective group as vanilla Mistlands and other custom biomes with that nature; members of one nature group cannot be selected separately. An independent custom biome can be selected by its EWD `biome` name. Groundwork synchronizes names rather than EWD's order-dependent numeric bits; until every configured name resolves, the complete biome override stays inactive and live restrictions remain in effect.
+
+Biome overrides do not alter independent cultivated-ground, heat/cold tolerance, roof, or spacing checks.
 
 On each reload, Groundwork reads and validates both `pickables.yml` and `plants.yml` before replacing either in-memory rule set. If either file is invalid, Groundwork keeps the last-known-good rules from both files. On multiplayer, the server synchronizes the normalized pair to clients; the generated owner-grouped reference files remain local to the server or single-player source of truth.
 
@@ -191,7 +199,7 @@ The root-sequence compact tuple schema is the only accepted growth schema. Groun
 - `Beehive Rain Honey Rate` affects loaded beehives only. Unloaded honey catch-up is processed without rain history; current rain applies after the beehive is loaded.
 - Rain disables beehive pollination while the area is loaded.
 - Dedicated servers may not have precise per-position weather history.
-- Groundwork does not write transient pollination multipliers to ZDOs.
+- Plant and foraging targets store owner-authoritative dynamic bonus progress and the last loaded/unloaded rates in ZDOs so later honey, weather, or pollination changes affect only future time; transient target-assignment caches remain local.
 - ZenBeehive beehive containers are supported: honey removed from the container counts as beehive harvest for Farming skill gain and capacity ownership.
 - `BepInEx/config/Groundwork/Groundwork.yml`, `pickables.yml`, and `plants.yml` are created automatically if missing.
 - `pickables.reference.yml` and `plants.reference.yml` are checked after each world prefab load and rewritten only when their settled content differs.

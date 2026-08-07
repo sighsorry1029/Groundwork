@@ -10,7 +10,18 @@ internal static class FarmingSkillSystem
 {
     private const string ForagingPickerSkillKey = "Groundwork_ForagingPickerFarmingSkill";
     private const string PlantPlanterSkillKey = "Groundwork_PlanterFarmingSkill";
+    private const string PlantDynamicBonusWorkKey = "Groundwork_PlantDynamicBonusWorkV1";
+    private const string PlantDynamicLastTicksKey = "Groundwork_PlantDynamicLastTicksV1";
+    private const string PlantDynamicLoadedBonusRateKey = "Groundwork_PlantDynamicLoadedBonusRateV1";
+    private const string PlantDynamicUnloadedBonusRateKey = "Groundwork_PlantDynamicUnloadedBonusRateV1";
+    private const string ForagingDynamicBonusWorkKey = "Groundwork_ForagingDynamicBonusWorkV1";
+    private const string ForagingDynamicLastTicksKey = "Groundwork_ForagingDynamicLastTicksV1";
+    private const string ForagingDynamicLoadedBonusRateKey = "Groundwork_ForagingDynamicLoadedBonusRateV1";
+    private const string ForagingDynamicUnloadedBonusRateKey = "Groundwork_ForagingDynamicUnloadedBonusRateV1";
+    private const string ForagingDynamicCycleTicksKey = "Groundwork_ForagingDynamicCycleTicksV1";
     private const string PreferredBonusEffectSourcePrefab = "Pickable_Fiddlehead";
+    private const float DynamicRateEpsilon = 0.001f;
+    private const float DynamicProgressCheckpointSeconds = 30f;
     private static readonly HashSet<Pickable> SeenPickables = new();
     private static Player? _placingPlayer;
     private static bool _rangePicking;
@@ -30,15 +41,15 @@ internal static class FarmingSkillSystem
     }
 
     internal readonly struct PickableRespawnTiming(
-        float totalSeconds,
-        double elapsedSeconds,
+        float requiredWorkSeconds,
+        double accumulatedWorkSeconds,
         float remainingSeconds,
         bool modified,
         bool hasNetworkState,
         bool hasPickedTime)
     {
-        internal readonly float TotalSeconds = totalSeconds;
-        internal readonly double ElapsedSeconds = elapsedSeconds;
+        internal readonly float RequiredWorkSeconds = requiredWorkSeconds;
+        internal readonly double AccumulatedWorkSeconds = accumulatedWorkSeconds;
         internal readonly float RemainingSeconds = remainingSeconds;
         internal readonly bool Modified = modified;
         internal readonly bool HasNetworkState = hasNetworkState;
@@ -322,22 +333,13 @@ internal static class FarmingSkillSystem
             return false;
         }
 
-        if (IsForagingTarget(pickable))
+        bool foragingTarget = IsForagingTarget(pickable);
+        if (foragingTarget)
         {
             float speed = GetForagingRespawnSpeedMultiplier(pickable);
             if (speed > 1.001f)
             {
                 respawnSeconds /= speed;
-                modified = true;
-            }
-
-            if (BeehivePollinationSystem.TryModifyForagingRespawnSeconds(pickable, ref respawnSeconds))
-            {
-                modified = true;
-            }
-
-            if (EnvironmentEffectSystem.TryModifyForagingRespawnSeconds(pickable, ref respawnSeconds))
-            {
                 modified = true;
             }
         }
@@ -355,6 +357,10 @@ internal static class FarmingSkillSystem
         }
 
         long pickedTime = zdo!.GetLong(ZDOVars.s_pickedTime, 0L);
+        bool hasDynamicState = HasDynamicState(zdo, ForagingDynamicLastTicksKey);
+        bool dynamicConfigured = foragingTarget && IsForagingDynamicRespawnConfigured();
+        bool useDynamicProgress = hasDynamicState || dynamicConfigured;
+        modified |= useDynamicProgress;
         if (pickedTime <= 1L)
         {
             timing = new PickableRespawnTiming(
@@ -367,11 +373,36 @@ internal static class FarmingSkillSystem
             return true;
         }
 
-        double elapsedSeconds = TimeSpan.FromTicks(Math.Max(0L, GetCurrentTicks() - pickedTime)).TotalSeconds;
-        float remainingSeconds = Math.Max(0f, respawnSeconds - (float)elapsedSeconds);
+        long nowTicks = GetCurrentTicks();
+        double elapsedSeconds = GetSecondsBetweenTicks(pickedTime, nowTicks);
+        float bonusWork = 0f;
+        float loadedMultiplier = 1f;
+        if (useDynamicProgress &&
+            TryProjectForagingDynamicProgress(
+                pickable,
+                zdo,
+                pickedTime,
+                nowTicks,
+                out float projectedBonusWork,
+                out float projectedLoadedMultiplier))
+        {
+            bonusWork = projectedBonusWork;
+            loadedMultiplier = projectedLoadedMultiplier;
+        }
+        else if (dynamicConfigured)
+        {
+            BeehivePollinationSystem.GetForagingRespawnMultipliers(
+                pickable,
+                out loadedMultiplier,
+                out _);
+        }
+
+        double accumulatedWorkSeconds = elapsedSeconds + Math.Max(0f, bonusWork);
+        float remainingWorkSeconds = Math.Max(0f, respawnSeconds - (float)accumulatedWorkSeconds);
+        float remainingSeconds = remainingWorkSeconds / Math.Max(1f, loadedMultiplier);
         timing = new PickableRespawnTiming(
             respawnSeconds,
-            elapsedSeconds,
+            accumulatedWorkSeconds,
             remainingSeconds,
             modified,
             hasNetworkState: true,
@@ -381,6 +412,7 @@ internal static class FarmingSkillSystem
 
     internal static bool ShouldRunVanillaShouldRespawn(Pickable pickable, ref bool result)
     {
+        UpdateForagingDynamicProgress(pickable);
         if (!TryGetPickableRespawnTiming(pickable, out PickableRespawnTiming timing) ||
             !timing.Modified ||
             !timing.HasNetworkState)
@@ -388,9 +420,238 @@ internal static class FarmingSkillSystem
             return true;
         }
 
-        result = (!timing.HasPickedTime || timing.ElapsedSeconds > timing.TotalSeconds) &&
+        result = (!timing.HasPickedTime ||
+                  timing.AccumulatedWorkSeconds > timing.RequiredWorkSeconds) &&
                  PassesSpawnCheck(pickable);
         return false;
+    }
+
+    internal static void ResetForagingDynamicProgress(Pickable pickable, bool picked)
+    {
+        if (!TryGetPickableZdo(pickable, requireOwner: true, out ZDO? zdo))
+        {
+            return;
+        }
+
+        bool hadState = HasDynamicState(zdo!, ForagingDynamicLastTicksKey);
+        if (!picked)
+        {
+            if (hadState)
+            {
+                ClearForagingDynamicProgress(zdo!);
+            }
+
+            return;
+        }
+
+        if (!IsForagingTarget(pickable) || !IsForagingDynamicRespawnConfigured())
+        {
+            if (hadState)
+            {
+                ClearForagingDynamicProgress(zdo!);
+            }
+
+            return;
+        }
+
+        long nowTicks = GetCurrentTicks();
+        long pickedTime = zdo!.GetLong(ZDOVars.s_pickedTime, nowTicks);
+        if (pickedTime <= 1L)
+        {
+            pickedTime = nowTicks;
+        }
+
+        // A cache built while this target was still pickable cannot contain it.
+        if (BeehivePollinationSystem.IsForagingRespawnBonusConfigured())
+        {
+            BeehivePollinationSystem.InvalidateTargetCaches();
+        }
+
+        GetForagingDynamicBonusRates(
+            pickable,
+            out float initialLoadedBonusRate,
+            out float initialUnloadedBonusRate);
+        if (initialLoadedBonusRate <= DynamicRateEpsilon &&
+            initialUnloadedBonusRate <= DynamicRateEpsilon)
+        {
+            if (hadState)
+            {
+                ClearForagingDynamicProgress(zdo);
+            }
+
+            return;
+        }
+
+        InitializeForagingDynamicProgress(
+            zdo,
+            nowTicks,
+            pickedTime,
+            loadedBonusRate: initialLoadedBonusRate,
+            unloadedBonusRate: initialUnloadedBonusRate);
+    }
+
+    private static void UpdateForagingDynamicProgress(Pickable pickable)
+    {
+        if (!TryGetPickableZdo(pickable, requireOwner: true, out ZDO? zdo))
+        {
+            return;
+        }
+
+        bool hasState = HasDynamicState(zdo!, ForagingDynamicLastTicksKey);
+        bool shouldTrack = hasState ||
+                           (IsForagingTarget(pickable) && IsForagingDynamicRespawnConfigured());
+        if (!shouldTrack)
+        {
+            return;
+        }
+
+        long nowTicks = GetCurrentTicks();
+        long pickedTime = zdo!.GetLong(ZDOVars.s_pickedTime, 0L);
+        if (pickedTime <= 1L)
+        {
+            return;
+        }
+
+        GetForagingDynamicBonusRates(
+            pickable,
+            out float currentLoadedBonusRate,
+            out float currentUnloadedBonusRate);
+        long lastTicks = zdo.GetLong(ForagingDynamicLastTicksKey, 0L);
+        if (lastTicks <= 0L)
+        {
+            if (currentLoadedBonusRate <= DynamicRateEpsilon &&
+                currentUnloadedBonusRate <= DynamicRateEpsilon)
+            {
+                return;
+            }
+
+            InitializeForagingDynamicProgress(
+                zdo,
+                nowTicks,
+                pickedTime,
+                currentLoadedBonusRate,
+                currentUnloadedBonusRate);
+            return;
+        }
+
+        long cycleTicks = zdo.GetLong(ForagingDynamicCycleTicksKey, pickedTime);
+        if (cycleTicks != pickedTime && pickedTime > lastTicks)
+        {
+            InitializeForagingDynamicProgress(
+                zdo,
+                nowTicks,
+                pickedTime,
+                currentLoadedBonusRate,
+                currentUnloadedBonusRate);
+            return;
+        }
+
+        float storedBonusWork = ReadNonNegativeFloat(zdo, ForagingDynamicBonusWorkKey);
+        float storedLoadedBonusRate = ReadNonNegativeFloat(zdo, ForagingDynamicLoadedBonusRateKey);
+        float storedUnloadedBonusRate = ReadNonNegativeFloat(zdo, ForagingDynamicUnloadedBonusRateKey);
+        float projectedBonusWork = ProjectDynamicBonusWork(
+            pickable,
+            storedBonusWork,
+            lastTicks,
+            storedLoadedBonusRate,
+            storedUnloadedBonusRate,
+            currentLoadedBonusRate,
+            nowTicks);
+        bool ratesChanged = !Mathf.Approximately(storedLoadedBonusRate, currentLoadedBonusRate) ||
+                            !Mathf.Approximately(storedUnloadedBonusRate, currentUnloadedBonusRate);
+        bool crossedLoadBoundary = BeehivePollinationSystem.GetLoadedSinceTicks(pickable) > lastTicks;
+        bool hasActiveRate = storedLoadedBonusRate > DynamicRateEpsilon ||
+                             storedUnloadedBonusRate > DynamicRateEpsilon ||
+                             currentLoadedBonusRate > DynamicRateEpsilon ||
+                             currentUnloadedBonusRate > DynamicRateEpsilon;
+        bool checkpoint = ratesChanged ||
+                          crossedLoadBoundary ||
+                          (hasActiveRate &&
+                           GetSecondsBetweenTicks(lastTicks, nowTicks) >= DynamicProgressCheckpointSeconds);
+
+        if (!checkpoint && cycleTicks == pickedTime)
+        {
+            return;
+        }
+
+        if (projectedBonusWork > storedBonusWork)
+        {
+            zdo.Set(ForagingDynamicBonusWorkKey, projectedBonusWork);
+        }
+
+        zdo.Set(ForagingDynamicLastTicksKey, Math.Max(lastTicks, nowTicks));
+        if (ratesChanged)
+        {
+            zdo.Set(ForagingDynamicLoadedBonusRateKey, currentLoadedBonusRate);
+            zdo.Set(ForagingDynamicUnloadedBonusRateKey, currentUnloadedBonusRate);
+        }
+
+        if (cycleTicks != pickedTime)
+        {
+            zdo.Set(ForagingDynamicCycleTicksKey, pickedTime);
+        }
+    }
+
+    private static bool TryProjectForagingDynamicProgress(
+        Pickable pickable,
+        ZDO zdo,
+        long pickedTime,
+        long nowTicks,
+        out float bonusWork,
+        out float loadedMultiplier)
+    {
+        bonusWork = 0f;
+        loadedMultiplier = 1f;
+        long lastTicks = zdo.GetLong(ForagingDynamicLastTicksKey, 0L);
+        if (lastTicks <= 0L)
+        {
+            return false;
+        }
+
+        long cycleTicks = zdo.GetLong(ForagingDynamicCycleTicksKey, pickedTime);
+        if (cycleTicks != pickedTime && pickedTime > lastTicks)
+        {
+            return false;
+        }
+
+        float storedLoadedBonusRate = ReadNonNegativeFloat(zdo, ForagingDynamicLoadedBonusRateKey);
+        GetForagingDynamicBonusRates(
+            pickable,
+            out float currentLoadedBonusRate,
+            out _);
+        bonusWork = ProjectDynamicBonusWork(
+            pickable,
+            ReadNonNegativeFloat(zdo, ForagingDynamicBonusWorkKey),
+            lastTicks,
+            storedLoadedBonusRate,
+            ReadNonNegativeFloat(zdo, ForagingDynamicUnloadedBonusRateKey),
+            currentLoadedBonusRate,
+            nowTicks);
+        loadedMultiplier = 1f + currentLoadedBonusRate;
+        return true;
+    }
+
+    private static void InitializeForagingDynamicProgress(
+        ZDO zdo,
+        long nowTicks,
+        long pickedTime,
+        float loadedBonusRate,
+        float unloadedBonusRate)
+    {
+        zdo.Set(ForagingDynamicBonusWorkKey, 0f);
+        zdo.Set(ForagingDynamicLastTicksKey, nowTicks);
+        zdo.Set(ForagingDynamicLoadedBonusRateKey, loadedBonusRate);
+        zdo.Set(ForagingDynamicUnloadedBonusRateKey, unloadedBonusRate);
+        zdo.Set(ForagingDynamicCycleTicksKey, pickedTime);
+    }
+
+    private static void ClearForagingDynamicProgress(ZDO zdo)
+    {
+        zdo.Set(ForagingDynamicBonusWorkKey, 0f);
+        zdo.Set(ForagingDynamicLastTicksKey, 0L);
+        zdo.Set(ForagingDynamicLoadedBonusRateKey, 0f);
+        zdo.Set(ForagingDynamicUnloadedBonusRateKey, 0f);
+        zdo.Set(ForagingDynamicCycleTicksKey, 0L);
     }
 
     internal static void BeginPlacePiece(Player player)
@@ -436,8 +697,204 @@ internal static class FarmingSkillSystem
         }
 
         TryModifyPlanterGrowTime(plant, ref growTime);
-        BeehivePollinationSystem.TryModifyPlantGrowTime(plant, ref growTime);
-        EnvironmentEffectSystem.TryModifyPlantGrowTime(plant, ref growTime);
+        ApplyPlantDynamicProgress(plant, ref growTime);
+    }
+
+    internal static void UpdatePlantDynamicProgress(Plant plant, bool forceCheckpoint = false)
+    {
+        if (!TryGetPlantZdo(plant, requireOwner: true, out ZDO? zdo))
+        {
+            return;
+        }
+
+        bool hasState = HasDynamicState(zdo!, PlantDynamicLastTicksKey);
+        if (!hasState && !IsPlantDynamicGrowthConfigured())
+        {
+            return;
+        }
+
+        long nowTicks = GetCurrentTicks();
+        GetPlantDynamicBonusRates(
+            plant,
+            out float currentLoadedBonusRate,
+            out float currentUnloadedBonusRate);
+        long lastTicks = zdo!.GetLong(PlantDynamicLastTicksKey, 0L);
+        if (lastTicks <= 0L)
+        {
+            if (currentLoadedBonusRate <= DynamicRateEpsilon &&
+                currentUnloadedBonusRate <= DynamicRateEpsilon)
+            {
+                return;
+            }
+
+            zdo.Set(PlantDynamicBonusWorkKey, 0f);
+            zdo.Set(PlantDynamicLastTicksKey, nowTicks);
+            zdo.Set(PlantDynamicLoadedBonusRateKey, currentLoadedBonusRate);
+            zdo.Set(PlantDynamicUnloadedBonusRateKey, currentUnloadedBonusRate);
+            return;
+        }
+
+        float storedBonusWork = ReadNonNegativeFloat(zdo, PlantDynamicBonusWorkKey);
+        float storedLoadedBonusRate = ReadNonNegativeFloat(zdo, PlantDynamicLoadedBonusRateKey);
+        float storedUnloadedBonusRate = ReadNonNegativeFloat(zdo, PlantDynamicUnloadedBonusRateKey);
+        float projectedBonusWork = ProjectDynamicBonusWork(
+            plant,
+            storedBonusWork,
+            lastTicks,
+            storedLoadedBonusRate,
+            storedUnloadedBonusRate,
+            currentLoadedBonusRate,
+            nowTicks);
+        bool ratesChanged = !Mathf.Approximately(storedLoadedBonusRate, currentLoadedBonusRate) ||
+                            !Mathf.Approximately(storedUnloadedBonusRate, currentUnloadedBonusRate);
+        bool crossedLoadBoundary = BeehivePollinationSystem.GetLoadedSinceTicks(plant) > lastTicks;
+        bool hasActiveRate = storedLoadedBonusRate > DynamicRateEpsilon ||
+                             storedUnloadedBonusRate > DynamicRateEpsilon ||
+                             currentLoadedBonusRate > DynamicRateEpsilon ||
+                             currentUnloadedBonusRate > DynamicRateEpsilon;
+        bool checkpoint = ratesChanged ||
+                          crossedLoadBoundary ||
+                          forceCheckpoint ||
+                          (hasActiveRate &&
+                           GetSecondsBetweenTicks(lastTicks, nowTicks) >= DynamicProgressCheckpointSeconds);
+        if (!checkpoint)
+        {
+            return;
+        }
+
+        if (projectedBonusWork > storedBonusWork)
+        {
+            zdo.Set(PlantDynamicBonusWorkKey, projectedBonusWork);
+        }
+
+        zdo.Set(PlantDynamicLastTicksKey, Math.Max(lastTicks, nowTicks));
+        if (ratesChanged)
+        {
+            zdo.Set(PlantDynamicLoadedBonusRateKey, currentLoadedBonusRate);
+            zdo.Set(PlantDynamicUnloadedBonusRateKey, currentUnloadedBonusRate);
+        }
+    }
+
+    internal static bool TryGetPlantRemainingGrowthSeconds(Plant plant, out float remainingSeconds)
+    {
+        remainingSeconds = 0f;
+        if (plant == null)
+        {
+            return false;
+        }
+
+        double elapsedSeconds = Math.Max(0.0, plant.TimeSincePlanted());
+        float equivalentGrowTime = plant.GetGrowTime();
+        if (equivalentGrowTime <= 0f)
+        {
+            return false;
+        }
+
+        if (!TryProjectPlantDynamicProgress(
+                plant,
+                GetCurrentTicks(),
+                out float bonusWork,
+                out float loadedMultiplier))
+        {
+            if (IsPlantDynamicGrowthConfigured())
+            {
+                BeehivePollinationSystem.GetPlantGrowthMultipliers(
+                    plant,
+                    out loadedMultiplier,
+                    out _);
+            }
+
+            remainingSeconds = Math.Max(0f, equivalentGrowTime - (float)elapsedSeconds) /
+                               Math.Max(1f, loadedMultiplier);
+            return true;
+        }
+
+        double accumulatedWork = elapsedSeconds + Math.Max(0f, bonusWork);
+        if (equivalentGrowTime <= elapsedSeconds)
+        {
+            remainingSeconds = 0f;
+            return true;
+        }
+
+        if (accumulatedWork <= 0.0001)
+        {
+            remainingSeconds = equivalentGrowTime / Math.Max(1f, loadedMultiplier);
+            return true;
+        }
+
+        double requiredWork = elapsedSeconds > 0.0001
+            ? equivalentGrowTime * accumulatedWork / elapsedSeconds
+            : equivalentGrowTime;
+        double remainingWork = Math.Max(0.0, requiredWork - accumulatedWork);
+        remainingSeconds = (float)(remainingWork / Math.Max(1f, loadedMultiplier));
+        return true;
+    }
+
+    private static void ApplyPlantDynamicProgress(Plant plant, ref float growTime)
+    {
+        // Vanilla elapsed time is the x1 work. Persisted bonus work only contains
+        // the integral above x1, so changing the current rate cannot rewrite history.
+        if (growTime <= 0f ||
+            !TryProjectPlantDynamicProgress(
+                plant,
+                GetCurrentTicks(),
+                out float bonusWork,
+                out _))
+        {
+            return;
+        }
+
+        double elapsedSeconds = Math.Max(0.0, plant.TimeSincePlanted());
+        double accumulatedWork = elapsedSeconds + Math.Max(0f, bonusWork);
+        if (elapsedSeconds <= 0.0001 || accumulatedWork <= 0.0001)
+        {
+            return;
+        }
+
+        float requiredWork = growTime;
+        if (accumulatedWork > requiredWork)
+        {
+            growTime = Math.Max(0f, (float)elapsedSeconds - 0.001f);
+            return;
+        }
+
+        growTime = Math.Max(0f, (float)(elapsedSeconds * requiredWork / accumulatedWork));
+    }
+
+    private static bool TryProjectPlantDynamicProgress(
+        Plant plant,
+        long nowTicks,
+        out float bonusWork,
+        out float loadedMultiplier)
+    {
+        bonusWork = 0f;
+        loadedMultiplier = 1f;
+        if (!TryGetPlantZdo(plant, requireOwner: false, out ZDO? zdo))
+        {
+            return false;
+        }
+
+        long lastTicks = zdo!.GetLong(PlantDynamicLastTicksKey, 0L);
+        if (lastTicks <= 0L)
+        {
+            return false;
+        }
+
+        float storedLoadedBonusRate = ReadNonNegativeFloat(zdo, PlantDynamicLoadedBonusRateKey);
+        GetPlantDynamicBonusRates(
+            plant,
+            out float currentLoadedBonusRate,
+            out _);
+        bonusWork = ProjectDynamicBonusWork(
+            plant,
+            ReadNonNegativeFloat(zdo, PlantDynamicBonusWorkKey),
+            lastTicks,
+            storedLoadedBonusRate,
+            ReadNonNegativeFloat(zdo, PlantDynamicUnloadedBonusRateKey),
+            currentLoadedBonusRate,
+            nowTicks);
+        loadedMultiplier = 1f + currentLoadedBonusRate;
+        return true;
     }
 
     private static void ApplyConfiguredPlantGrowTime(Plant plant, ref float growTime)
@@ -649,6 +1106,128 @@ internal static class FarmingSkillSystem
         return Mathf.Lerp(1f, Mathf.Max(1f, speedFactor), Mathf.Clamp01(skillFactor));
     }
 
+    private static bool IsPlantDynamicGrowthConfigured()
+    {
+        return BeehivePollinationSystem.IsPlantGrowthBonusConfigured() ||
+               GroundworkToolsDomain.WetEnvironmentPlantGrowSpeedFactor > 1.001f;
+    }
+
+    private static bool IsForagingDynamicRespawnConfigured()
+    {
+        return BeehivePollinationSystem.IsForagingRespawnBonusConfigured() ||
+               GroundworkToolsDomain.WetEnvironmentForagingRespawnSpeedFactor > 1.001f;
+    }
+
+    private static void GetPlantDynamicBonusRates(
+        Plant plant,
+        out float loadedBonusRate,
+        out float unloadedBonusRate)
+    {
+        BeehivePollinationSystem.GetPlantGrowthMultipliers(
+            plant,
+            out float loadedMultiplier,
+            out float unloadedMultiplier);
+        loadedBonusRate = ToBonusRate(loadedMultiplier);
+        unloadedBonusRate = ToBonusRate(unloadedMultiplier);
+    }
+
+    private static void GetForagingDynamicBonusRates(
+        Pickable pickable,
+        out float loadedBonusRate,
+        out float unloadedBonusRate)
+    {
+        BeehivePollinationSystem.GetForagingRespawnMultipliers(
+            pickable,
+            out float loadedMultiplier,
+            out float unloadedMultiplier);
+        loadedBonusRate = ToBonusRate(loadedMultiplier);
+        unloadedBonusRate = ToBonusRate(unloadedMultiplier);
+    }
+
+    private static float ToBonusRate(float multiplier)
+    {
+        return float.IsNaN(multiplier) || float.IsInfinity(multiplier)
+            ? 0f
+            : Math.Max(0f, multiplier - 1f);
+    }
+
+    private static bool HasDynamicState(ZDO zdo, string lastTicksKey)
+    {
+        return zdo.GetLong(lastTicksKey, 0L) > 0L;
+    }
+
+    private static float ReadNonNegativeFloat(ZDO zdo, string key)
+    {
+        float value = zdo.GetFloat(key, 0f);
+        return float.IsNaN(value) || float.IsInfinity(value)
+            ? 0f
+            : Math.Max(0f, value);
+    }
+
+    private static float ProjectDynamicBonusWork(
+        Component target,
+        float storedBonusWork,
+        long lastTicks,
+        float loadedBonusRate,
+        float unloadedBonusRate,
+        float currentLoadedBonusRate,
+        long nowTicks)
+    {
+        float bonusWork = Math.Max(0f, storedBonusWork);
+        long segmentStartTicks = lastTicks;
+        long loadedSinceTicks = BeehivePollinationSystem.GetLoadedSinceTicks(target);
+        bool crossedLoadBoundary = loadedSinceTicks > segmentStartTicks;
+        if (crossedLoadBoundary)
+        {
+            // The stored unloaded rate owns the time before this load. The state
+            // observed after Awake owns only the newly loaded interval.
+            long unloadedEndTicks = Math.Min(loadedSinceTicks, nowTicks);
+            bonusWork = AddDynamicBonusWork(
+                bonusWork,
+                segmentStartTicks,
+                unloadedEndTicks,
+                unloadedBonusRate);
+            segmentStartTicks = unloadedEndTicks;
+        }
+
+        return AddDynamicBonusWork(
+            bonusWork,
+            segmentStartTicks,
+            nowTicks,
+            crossedLoadBoundary ? currentLoadedBonusRate : loadedBonusRate);
+    }
+
+    private static float AddDynamicBonusWork(
+        float bonusWork,
+        long startTicks,
+        long endTicks,
+        float bonusRate)
+    {
+        if (startTicks <= 0L || endTicks <= startTicks || bonusRate <= 0f)
+        {
+            return Math.Max(0f, bonusWork);
+        }
+
+        double seconds = GetSecondsBetweenTicks(startTicks, endTicks);
+        double accumulated = Math.Max(0f, bonusWork) + seconds * bonusRate;
+        if (double.IsNaN(accumulated) || accumulated <= 0.0)
+        {
+            return 0f;
+        }
+
+        return accumulated >= float.MaxValue ? float.MaxValue : (float)accumulated;
+    }
+
+    private static double GetSecondsBetweenTicks(long startTicks, long endTicks)
+    {
+        if (startTicks <= 0L || endTicks <= startTicks)
+        {
+            return 0.0;
+        }
+
+        return Math.Max(0.0, TimeSpan.FromTicks(endTicks - startTicks).TotalSeconds);
+    }
+
     private static long GetCurrentTicks()
     {
         return ZNet.instance != null
@@ -744,6 +1323,7 @@ internal static class PickableSetPickedForagingSkillPatch
     private static void Postfix(Pickable __instance, bool picked)
     {
         FarmingSkillSystem.EnsureForagingPickerSkill(__instance, picked);
+        FarmingSkillSystem.ResetForagingDynamicProgress(__instance, picked);
     }
 }
 
@@ -763,5 +1343,51 @@ internal static class PlantGetGrowTimeGroundworkPatch
     private static void Postfix(Plant __instance, ref float __result)
     {
         FarmingSkillSystem.TryModifyGrowTime(__instance, ref __result);
+    }
+}
+
+[HarmonyPatch(typeof(Plant), "UpdateHealth")]
+internal static class PlantUpdateHealthDynamicProgressPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(Plant __instance)
+    {
+        FarmingSkillSystem.UpdatePlantDynamicProgress(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(Plant), nameof(Plant.Awake))]
+internal static class PlantAwakeDynamicProgressPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(Plant __instance)
+    {
+        FarmingSkillSystem.UpdatePlantDynamicProgress(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(SlowUpdate), nameof(SlowUpdate.OnDestroy))]
+internal static class PlantOnDestroyDynamicProgressPatch
+{
+    private static void Prefix(SlowUpdate __instance)
+    {
+        if (__instance is Plant plant)
+        {
+            FarmingSkillSystem.UpdatePlantDynamicProgress(plant, forceCheckpoint: true);
+        }
+    }
+}
+
+[HarmonyPatch(typeof(ZNetView), nameof(ZNetView.ResetZDO))]
+internal static class PlantZdoResetDynamicProgressPatch
+{
+    private static void Prefix(ZNetView __instance)
+    {
+        Plant? plant = __instance.GetComponent<Plant>();
+        if (plant != null)
+        {
+            // Zone unload disconnects the ZDO before Unity calls OnDestroy.
+            FarmingSkillSystem.UpdatePlantDynamicProgress(plant, forceCheckpoint: true);
+        }
     }
 }

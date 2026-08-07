@@ -61,11 +61,26 @@ internal static class PlayerUpdateGroundworkPatch
 [HarmonyPatch(typeof(Player), "UpdatePlacementGhost")]
 internal static class PlayerUpdatePlacementGhostGroundworkPatch
 {
+    private static void Prefix(
+        Player __instance,
+        out GrowthOverrideSystem.PieceBiomeOverrideState __state)
+    {
+        __state = GrowthOverrideSystem.BeginPlacementBiomeOverride(__instance);
+    }
+
     private static void Postfix(Player __instance)
     {
         MassPlantingSystem.TrySnapPlacementGhost(__instance);
         MassPlantingSystem.UpdatePlacementPreview(__instance);
         TerrainToolRangeSystem.ApplyCurrentRangeToGhost(__instance);
+    }
+
+    private static Exception? Finalizer(
+        GrowthOverrideSystem.PieceBiomeOverrideState __state,
+        Exception? __exception)
+    {
+        GrowthOverrideSystem.EndPlacementBiomeOverride(__state);
+        return __exception;
     }
 }
 
@@ -133,6 +148,25 @@ internal static class PlantAwakeGroundworkPatch
         MassPlantingSystem.TrySynchronizePendingPlant(__instance);
         BeehivePollinationSystem.TrackLoadedTarget(__instance);
         FarmingSkillSystem.TryStorePlanterSkill(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(Plant), "UpdateHealth")]
+internal static class PlantUpdateHealthGroundworkPatch
+{
+    private static void Prefix(
+        Plant __instance,
+        out GrowthOverrideSystem.PlantBiomeOverrideState __state)
+    {
+        __state = GrowthOverrideSystem.BeginPlantHealthBiomeOverride(__instance);
+    }
+
+    private static Exception? Finalizer(
+        GrowthOverrideSystem.PlantBiomeOverrideState __state,
+        Exception? __exception)
+    {
+        GrowthOverrideSystem.EndPlantHealthBiomeOverride(__state);
+        return __exception;
     }
 }
 
