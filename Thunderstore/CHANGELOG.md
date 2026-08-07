@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.10
+## 1.1.0
 
 - Added optional Plant biome overrides to `plants.yml`, applying the same allowed-biome list to cultivator placement, mass planting, and planted-crop health checks while leaving other growth requirements unchanged.
 - Added Expand World Data compatibility for biome names and effective nature groups, with unresolved custom names safely preserving live restrictions until EWD's synchronized biome map is available.
