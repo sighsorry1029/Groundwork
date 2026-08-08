@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Reduced startup log noise by replacing per-prefab warnings for unnamed live Plant biome bits with one Debug summary, while preserving actionable warnings for other reference conflicts.
+
 ## 1.1.0
 
 - Added optional Plant biome overrides to `plants.yml`, applying the same allowed-biome list to cultivator placement, mass planting, and planted-crop health checks while leaving other growth requirements unchanged.

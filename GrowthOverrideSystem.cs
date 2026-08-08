@@ -1631,6 +1631,7 @@ internal static class GrowthOverrideSystem
             new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> ambiguousPickables = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> ambiguousPlants = new(StringComparer.OrdinalIgnoreCase);
+        List<string> unnamedBiomeReferencePrefabs = [];
 
         foreach (GameObject prefab in EnumerateScenePrefabs(scene))
         {
@@ -1715,11 +1716,19 @@ internal static class GrowthOverrideSystem
                             prefab,
                             growingPlants,
                             out referenceBiomes,
-                            out string biomeError))
+                            out string biomeError,
+                            out bool unnamedBiomeBit))
                     {
-                        GroundworkPlugin.ModLogger.LogWarning(
-                            $"Omitting biomes for Plant prefab '{prefabName}' from " +
-                            $"{PlantsReferenceFileName}: {biomeError}");
+                        if (unnamedBiomeBit)
+                        {
+                            unnamedBiomeReferencePrefabs.Add(prefabName);
+                        }
+                        else
+                        {
+                            GroundworkPlugin.ModLogger.LogWarning(
+                                $"Omitting biomes for Plant prefab '{prefabName}' from " +
+                                $"{PlantsReferenceFileName}: {biomeError}");
+                        }
                     }
 
                     plants.Add(prefabName, new PlantGrowthOverride
@@ -1731,6 +1740,17 @@ internal static class GrowthOverrideSystem
                     });
                 }
             }
+        }
+
+        if (unnamedBiomeReferencePrefabs.Count > 0)
+        {
+            const int exampleLimit = 5;
+            string examples = string.Join(", ", unnamedBiomeReferencePrefabs.Take(exampleLimit));
+            string suffix = unnamedBiomeReferencePrefabs.Count > exampleLimit ? ", ..." : "";
+            GroundworkPlugin.ModLogger.LogDebug(
+                $"Omitted biome metadata from {PlantsReferenceFileName} for " +
+                $"{unnamedBiomeReferencePrefabs.Count} Plant prefab(s) whose live biome mask contains " +
+                $"an unnamed bit. Live restrictions remain unchanged. Examples: {examples}{suffix}");
         }
 
         return new GrowthReferenceSnapshot
@@ -1788,10 +1808,12 @@ internal static class GrowthOverrideSystem
         GameObject prefab,
         IReadOnlyList<Plant> plants,
         out PlantBiomeList? biomes,
-        out string error)
+        out string error,
+        out bool unnamedBiomeBit)
     {
         biomes = null;
         error = "";
+        unnamedBiomeBit = false;
         if (plants.Count == 0)
         {
             error = "it has no growing Plant components.";
@@ -1838,6 +1860,7 @@ internal static class GrowthOverrideSystem
                 name.Equals(nameof(Heightmap.Biome.All), StringComparison.OrdinalIgnoreCase) ||
                 name.Any(char.IsControl))
             {
+                unnamedBiomeBit = true;
                 error = $"biome bit {unchecked((int)bit)} has no stable name.";
                 return false;
             }
