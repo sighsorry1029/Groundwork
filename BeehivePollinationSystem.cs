@@ -9,6 +9,8 @@ namespace Groundwork;
 internal static class BeehivePollinationSystem
 {
     private const string TendedFarmingLevelKey = "Groundwork_BeehiveTendedFarmingLevel";
+    private const string ProductThresholdKey = "Groundwork_BeehiveProductThresholdV1";
+    private const float ProductThresholdEpsilon = 0.001f;
     private const float PollinationCacheLifetimeSeconds = 3f;
     private const float PollinationCachePruneIntervalSeconds = 30f;
     private const float PollinationCacheMaxIdleSeconds = 60f;
@@ -17,6 +19,24 @@ internal static class BeehivePollinationSystem
     private const float UnloadedCatchupThresholdSeconds = 30f;
     private const float UnloadedCatchupDaylightShare = 0.5f;
     private const int PollinationSearchMaxBufferSize = 2048;
+    private const int PollinationRangePreviewSegmentCount = 96;
+    private const int PollinationRangePreviewMinRadialSteps = 8;
+    private const int PollinationRangePreviewMaxRadialSteps = 40;
+    private const int PollinationRangePreviewRefinementIterations = 5;
+    private const int PollinationTargetMarkerSegmentCount = 16;
+    private const float PollinationPreviewYOffset = 0.06f;
+    private const float PollinationTargetMarkerYOffset = 0.12f;
+    private const float PollinationRangePreviewLineWidth = 0.045f;
+    private const float PollinationPreviewRefreshSeconds = 0.25f;
+    private const float PollinationRangePreviewRefreshSeconds = 0.5f;
+    private const float PollinationRangePreviewRadialStepMeters = 0.5f;
+    private const float PollinationRangePreviewMinimumRadius = 0.05f;
+    private const float PollinationRangePreviewSphereEpsilon = 0.0001f;
+    private const float PollinationTargetMarkerRadius = 0.29f;
+    private const float PollinationTargetMarkerInnerRadius = PollinationTargetMarkerRadius - PollinationRangePreviewLineWidth * 0.5f;
+    private const float PollinationTargetMarkerOuterRadius = PollinationTargetMarkerRadius + PollinationRangePreviewLineWidth * 0.5f;
+    private static readonly Color ActivePollinationPreviewColor = new(0.35f, 1f, 0.35f, 0.45f);
+    private static readonly Color InactivePollinationPreviewColor = new(0.65f, 0.65f, 0.65f, 0.375f);
     private static Collider[] PollinationHits = new Collider[256];
     private static Collider[] AssignmentHits = new Collider[128];
     private static readonly Dictionary<Beehive, PollinationCache> PollinationCaches = [];
@@ -29,6 +49,28 @@ internal static class BeehivePollinationSystem
     private static readonly HashSet<Plant> SeenPlants = [];
     private static readonly HashSet<Pickable> SeenPickables = [];
     private static readonly HashSet<Beehive> SeenHives = [];
+    private static readonly Vector3[] PollinationRangePreviewPositions = new Vector3[PollinationRangePreviewSegmentCount + 1];
+    private static readonly List<Vector3> PollinationTargetPreviewVertices = [];
+    private static readonly List<int> PollinationTargetPreviewIndices = [];
+    private static readonly List<Color> PollinationTargetPreviewColors = [];
+    private static GameObject? PollinationRangePreviewObject;
+    private static LineRenderer? PollinationRangePreviewLine;
+    private static GameObject? PollinationTargetPreviewObject;
+    private static MeshFilter? PollinationTargetPreviewMeshFilter;
+    private static MeshRenderer? PollinationTargetPreviewRenderer;
+    private static Mesh? PollinationTargetPreviewMesh;
+    private static Material? PollinationPreviewMaterial;
+    private static Beehive? PollinationRangePreviewHive;
+    private static Beehive? PollinationTargetPreviewHive;
+    private static Beehive? PollinationPreviewStatusHive;
+    private static float PollinationRangePreviewRadius = -1f;
+    private static float _nextPollinationRangePreviewRefreshAt;
+    private static float _nextPollinationTargetPreviewRefreshAt;
+    private static float _nextPollinationPreviewStatusRefreshAt;
+    private static bool _pollinationRangePreviewHasGeometry;
+    private static bool _pollinationTargetPreviewActive;
+    private static bool _pollinationPreviewStructurallyActive;
+    private static bool _pollinationPreviewCurrentlyActive;
     private static Player? _placingPlayer;
     private static int _pollinationMask;
     private static float _nextPollinationCachePruneAt;
@@ -100,6 +142,7 @@ internal static class BeehivePollinationSystem
 
     internal static void Shutdown()
     {
+        DestroyHoverPreview();
         PollinationCaches.Clear();
         AssignmentCaches.Clear();
         LoadedSinceTicksByTarget.Clear();
@@ -123,6 +166,507 @@ internal static class BeehivePollinationSystem
     {
         PollinationCaches.Clear();
         AssignmentCaches.Clear();
+    }
+
+    internal static void UpdateHoverPreview(Player player)
+    {
+        if (player == null ||
+            player != Player.m_localPlayer ||
+            !GroundworkToolsDomain.BeehivePollinationFeatureEnabled ||
+            !GroundworkToolsDomain.BeehivePollinationPreviewEnabled)
+        {
+            ClearHoverPreview();
+            return;
+        }
+
+        GameObject? hoverObject = player.GetHoverObject();
+        Beehive? beehive = hoverObject != null
+            ? hoverObject.GetComponent<Beehive>() ??
+              hoverObject.GetComponentInParent<Beehive>() ??
+              hoverObject.GetComponentInChildren<Beehive>()
+            : null;
+        int maxCount = GroundworkToolsDomain.BeehivePollinationMaxPlants;
+        float radius = GroundworkToolsDomain.BeehivePollinationRadius;
+        if (beehive == null || !IsValid(beehive) || maxCount <= 0 || radius <= 0f)
+        {
+            ClearHoverPreview();
+            return;
+        }
+
+        RefreshPollinationPreviewStatus(beehive);
+
+        UpdatePollinationRangePreview(beehive, radius, _pollinationPreviewCurrentlyActive);
+
+        if (_pollinationPreviewStructurallyActive)
+        {
+            UpdatePollinationTargetPreview(beehive, maxCount, radius, _pollinationPreviewCurrentlyActive);
+            return;
+        }
+
+        HidePollinationTargetPreview();
+    }
+
+    internal static void ClearHoverPreview()
+    {
+        HidePollinationRangePreview();
+        HidePollinationTargetPreview();
+        PollinationPreviewStatusHive = null;
+        _nextPollinationPreviewStatusRefreshAt = 0f;
+        _pollinationPreviewStructurallyActive = false;
+        _pollinationPreviewCurrentlyActive = false;
+    }
+
+    internal static void DestroyHoverPreview()
+    {
+        ClearHoverPreview();
+
+        if (PollinationRangePreviewObject != null)
+        {
+            UnityEngine.Object.Destroy(PollinationRangePreviewObject);
+        }
+
+        if (PollinationTargetPreviewObject != null)
+        {
+            UnityEngine.Object.Destroy(PollinationTargetPreviewObject);
+        }
+
+        if (PollinationTargetPreviewMesh != null)
+        {
+            UnityEngine.Object.Destroy(PollinationTargetPreviewMesh);
+        }
+
+        if (PollinationPreviewMaterial != null)
+        {
+            UnityEngine.Object.Destroy(PollinationPreviewMaterial);
+        }
+
+        PollinationRangePreviewObject = null;
+        PollinationRangePreviewLine = null;
+        PollinationTargetPreviewObject = null;
+        PollinationTargetPreviewMeshFilter = null;
+        PollinationTargetPreviewRenderer = null;
+        PollinationTargetPreviewMesh = null;
+        PollinationPreviewMaterial = null;
+        PollinationTargetPreviewVertices.Clear();
+        PollinationTargetPreviewIndices.Clear();
+        PollinationTargetPreviewColors.Clear();
+    }
+
+    private static void UpdatePollinationRangePreview(Beehive beehive, float radius, bool active)
+    {
+        LineRenderer? line = EnsurePollinationRangePreviewLine();
+        if (line == null || PollinationRangePreviewObject == null)
+        {
+            return;
+        }
+
+        Color color = active ? ActivePollinationPreviewColor : InactivePollinationPreviewColor;
+        line.startColor = color;
+        line.endColor = color;
+
+        Vector3 center = beehive.transform.position;
+        bool changed = PollinationRangePreviewHive != beehive ||
+                       !Mathf.Approximately(PollinationRangePreviewRadius, radius);
+        if (changed)
+        {
+            PollinationRangePreviewHive = beehive;
+            PollinationRangePreviewRadius = radius;
+            _nextPollinationRangePreviewRefreshAt = 0f;
+            _pollinationRangePreviewHasGeometry = false;
+        }
+
+        float now = Time.realtimeSinceStartup;
+        if (now >= _nextPollinationRangePreviewRefreshAt)
+        {
+            _nextPollinationRangePreviewRefreshAt = now + PollinationRangePreviewRefreshSeconds;
+            if (TryBuildPollinationRangePreview(center, radius))
+            {
+                line.SetPositions(PollinationRangePreviewPositions);
+                _pollinationRangePreviewHasGeometry = true;
+            }
+            else
+            {
+                _pollinationRangePreviewHasGeometry = false;
+            }
+        }
+
+        PollinationRangePreviewObject.SetActive(_pollinationRangePreviewHasGeometry);
+    }
+
+    private static bool TryBuildPollinationRangePreview(Vector3 center, float radius)
+    {
+        // A single closed line can represent only the terrain footprint connected to the point below the hive.
+        // Actual collider-based targets remain authoritative and are shown by the separate target markers.
+        if (!TryGetHeightmapSurfaceHeight(center, out float centerTerrainHeight))
+        {
+            return false;
+        }
+
+        float radiusSquared = radius * radius;
+        float centerHeightDifference = centerTerrainHeight - center.y;
+        float centerHorizontalRadiusSquared = radiusSquared - centerHeightDifference * centerHeightDifference;
+        if (centerHorizontalRadiusSquared <= PollinationRangePreviewMinimumRadius * PollinationRangePreviewMinimumRadius)
+        {
+            return false;
+        }
+
+        int radialSteps = Mathf.Clamp(
+            Mathf.CeilToInt(radius / PollinationRangePreviewRadialStepMeters),
+            PollinationRangePreviewMinRadialSteps,
+            PollinationRangePreviewMaxRadialSteps);
+        float radialStep = radius / radialSteps;
+
+        for (int index = 0; index < PollinationRangePreviewSegmentCount; index++)
+        {
+            float angle = index / (float)PollinationRangePreviewSegmentCount * Mathf.PI * 2f;
+            Vector3 direction = new(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+            float insideDistance = 0f;
+            float insideHeight = centerTerrainHeight;
+
+            for (int step = 1; step <= radialSteps; step++)
+            {
+                float sampleDistance = step == radialSteps ? radius : radialStep * step;
+                Vector3 samplePoint = center + direction * sampleDistance;
+                if (!TryGetHeightmapSurfaceHeight(samplePoint, out float sampleHeight))
+                {
+                    return false;
+                }
+
+                if (IsTerrainPointWithinPollinationSphere(
+                        sampleDistance,
+                        sampleHeight,
+                        center.y,
+                        radiusSquared))
+                {
+                    insideDistance = sampleDistance;
+                    insideHeight = sampleHeight;
+                    continue;
+                }
+
+                float outsideDistance = sampleDistance;
+                for (int refinement = 0; refinement < PollinationRangePreviewRefinementIterations; refinement++)
+                {
+                    float midpointDistance = (insideDistance + outsideDistance) * 0.5f;
+                    Vector3 midpoint = center + direction * midpointDistance;
+                    if (!TryGetHeightmapSurfaceHeight(midpoint, out float midpointHeight))
+                    {
+                        return false;
+                    }
+
+                    if (IsTerrainPointWithinPollinationSphere(
+                            midpointDistance,
+                            midpointHeight,
+                            center.y,
+                            radiusSquared))
+                    {
+                        insideDistance = midpointDistance;
+                        insideHeight = midpointHeight;
+                    }
+                    else
+                    {
+                        outsideDistance = midpointDistance;
+                    }
+                }
+
+                break;
+            }
+
+            Vector3 point = center + direction * insideDistance;
+            point.y = insideHeight + PollinationPreviewYOffset;
+            PollinationRangePreviewPositions[index] = point;
+        }
+
+        PollinationRangePreviewPositions[PollinationRangePreviewSegmentCount] = PollinationRangePreviewPositions[0];
+        return true;
+    }
+
+    private static bool IsTerrainPointWithinPollinationSphere(
+        float horizontalDistance,
+        float terrainHeight,
+        float centerHeight,
+        float radiusSquared)
+    {
+        float heightDifference = terrainHeight - centerHeight;
+        return horizontalDistance * horizontalDistance + heightDifference * heightDifference <=
+               radiusSquared + PollinationRangePreviewSphereEpsilon;
+    }
+
+    private static bool TryGetTerrainHeight(Vector3 point, out float height)
+    {
+        if (TryGetHeightmapSurfaceHeight(point, out height))
+        {
+            return true;
+        }
+
+        if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(point, out height))
+        {
+            return true;
+        }
+
+        return Heightmap.GetHeight(point, out height);
+    }
+
+    private static bool TryGetHeightmapSurfaceHeight(Vector3 point, out float height)
+    {
+        Heightmap? heightmap = Heightmap.FindHeightmap(point);
+        if (heightmap == null || heightmap.m_width <= 0 || heightmap.m_scale <= 0f)
+        {
+            height = 0f;
+            return false;
+        }
+
+        Vector3 localPoint = heightmap.transform.InverseTransformPoint(point);
+        float halfWidth = heightmap.m_width * heightmap.m_scale * 0.5f;
+        float gridX = (localPoint.x + halfWidth) / heightmap.m_scale;
+        float gridZ = (localPoint.z + halfWidth) / heightmap.m_scale;
+        if (gridX < 0f || gridZ < 0f || gridX > heightmap.m_width || gridZ > heightmap.m_width)
+        {
+            height = 0f;
+            return false;
+        }
+
+        int cellX = Mathf.Min(Mathf.FloorToInt(gridX), heightmap.m_width - 1);
+        int cellZ = Mathf.Min(Mathf.FloorToInt(gridZ), heightmap.m_width - 1);
+        float cellXFactor = gridX - cellX;
+        float cellZFactor = gridZ - cellZ;
+        float height00 = heightmap.GetHeight(cellX, cellZ);
+        float height10 = heightmap.GetHeight(cellX + 1, cellZ);
+        float height01 = heightmap.GetHeight(cellX, cellZ + 1);
+        float height11 = heightmap.GetHeight(cellX + 1, cellZ + 1);
+        // Match Heightmap.RebuildCollisionMesh's v00-v01-v10 / v10-v01-v11 diagonal.
+        float localHeight = cellXFactor + cellZFactor <= 1f
+            ? height00 + (height10 - height00) * cellXFactor + (height01 - height00) * cellZFactor
+            : height11 + (height01 - height11) * (1f - cellXFactor) +
+              (height10 - height11) * (1f - cellZFactor);
+        height = heightmap.transform.TransformPoint(new Vector3(localPoint.x, localHeight, localPoint.z)).y;
+        return true;
+    }
+
+    private static LineRenderer? EnsurePollinationRangePreviewLine()
+    {
+        if (PollinationRangePreviewLine != null && PollinationRangePreviewObject != null)
+        {
+            return PollinationRangePreviewLine;
+        }
+
+        PollinationRangePreviewObject = new GameObject("Groundwork_BeehivePollinationRangePreview")
+        {
+            hideFlags = HideFlags.DontSave
+        };
+        PollinationRangePreviewLine = PollinationRangePreviewObject.AddComponent<LineRenderer>();
+        Material? material = GetPollinationPreviewMaterial();
+        if (material != null)
+        {
+            PollinationRangePreviewLine.sharedMaterial = material;
+        }
+
+        PollinationRangePreviewLine.useWorldSpace = true;
+        PollinationRangePreviewLine.loop = false;
+        PollinationRangePreviewLine.positionCount = PollinationRangePreviewSegmentCount + 1;
+        PollinationRangePreviewLine.widthMultiplier = PollinationRangePreviewLineWidth;
+        PollinationRangePreviewLine.numCapVertices = 2;
+        PollinationRangePreviewLine.numCornerVertices = 2;
+        PollinationRangePreviewLine.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        PollinationRangePreviewLine.receiveShadows = false;
+        PollinationRangePreviewObject.SetActive(false);
+        return PollinationRangePreviewLine;
+    }
+
+    private static void RefreshPollinationPreviewStatus(Beehive beehive)
+    {
+        float now = Time.realtimeSinceStartup;
+        if (PollinationPreviewStatusHive == beehive && now < _nextPollinationPreviewStatusRefreshAt)
+        {
+            return;
+        }
+
+        PollinationPreviewStatusHive = beehive;
+        _nextPollinationPreviewStatusRefreshAt = now + PollinationPreviewRefreshSeconds;
+        _pollinationPreviewStructurallyActive = CanHivePollinate(beehive, respectCurrentEnvironment: false);
+        _pollinationPreviewCurrentlyActive = _pollinationPreviewStructurallyActive && IsLoadedPollinationEnvironmentActive();
+    }
+
+    private static void UpdatePollinationTargetPreview(
+        Beehive beehive,
+        int maxCount,
+        float radius,
+        bool active)
+    {
+        bool changed = PollinationTargetPreviewHive != beehive || _pollinationTargetPreviewActive != active;
+        if (changed)
+        {
+            PollinationTargetPreviewHive = beehive;
+            _pollinationTargetPreviewActive = active;
+            _nextPollinationTargetPreviewRefreshAt = 0f;
+        }
+
+        float now = Time.realtimeSinceStartup;
+        if (now < _nextPollinationTargetPreviewRefreshAt)
+        {
+            return;
+        }
+
+        _nextPollinationTargetPreviewRefreshAt = now + PollinationPreviewRefreshSeconds;
+        PollinationCache? cache = GetPollinationCache(beehive, maxCount, radius);
+        MeshRenderer? renderer = EnsurePollinationTargetPreviewRenderer();
+        if (cache == null || renderer == null || PollinationTargetPreviewObject == null || PollinationTargetPreviewMesh == null)
+        {
+            return;
+        }
+
+        PollinationTargetPreviewVertices.Clear();
+        PollinationTargetPreviewIndices.Clear();
+        PollinationTargetPreviewColors.Clear();
+        Color color = active ? ActivePollinationPreviewColor : InactivePollinationPreviewColor;
+        foreach (Plant plant in cache.Plants)
+        {
+            if (plant != null)
+            {
+                AddPollinationTargetMarker(plant.transform.position, color);
+            }
+        }
+
+        foreach (Pickable pickable in cache.Pickables)
+        {
+            if (pickable != null)
+            {
+                AddPollinationTargetMarker(pickable.transform.position, color);
+            }
+        }
+
+        PollinationTargetPreviewMesh.Clear();
+        if (PollinationTargetPreviewVertices.Count == 0)
+        {
+            PollinationTargetPreviewObject.SetActive(false);
+            return;
+        }
+
+        PollinationTargetPreviewMesh.SetVertices(PollinationTargetPreviewVertices);
+        PollinationTargetPreviewMesh.SetColors(PollinationTargetPreviewColors);
+        PollinationTargetPreviewMesh.SetIndices(PollinationTargetPreviewIndices, MeshTopology.Triangles, 0);
+        PollinationTargetPreviewMesh.RecalculateBounds();
+        PollinationTargetPreviewObject.SetActive(true);
+    }
+
+    private static void AddPollinationTargetMarker(Vector3 center, Color color)
+    {
+        if (TryGetTerrainHeight(center, out float terrainHeight) && Mathf.Abs(center.y - terrainHeight) <= 1f)
+        {
+            center.y = terrainHeight;
+        }
+
+        center.y += PollinationTargetMarkerYOffset;
+        int vertexStart = PollinationTargetPreviewVertices.Count;
+        for (int index = 0; index < PollinationTargetMarkerSegmentCount; index++)
+        {
+            float angle = index / (float)PollinationTargetMarkerSegmentCount * Mathf.PI * 2f;
+            Vector3 direction = new(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+            PollinationTargetPreviewVertices.Add(center + direction * PollinationTargetMarkerInnerRadius);
+            PollinationTargetPreviewVertices.Add(center + direction * PollinationTargetMarkerOuterRadius);
+            PollinationTargetPreviewColors.Add(color);
+            PollinationTargetPreviewColors.Add(color);
+        }
+
+        for (int index = 0; index < PollinationTargetMarkerSegmentCount; index++)
+        {
+            int next = (index + 1) % PollinationTargetMarkerSegmentCount;
+            int inner = vertexStart + index * 2;
+            int outer = inner + 1;
+            int nextInner = vertexStart + next * 2;
+            int nextOuter = nextInner + 1;
+            AddPollinationTargetTriangle(inner, outer, nextOuter);
+            AddPollinationTargetTriangle(inner, nextOuter, nextInner);
+        }
+    }
+
+    private static void AddPollinationTargetTriangle(int first, int second, int third)
+    {
+        PollinationTargetPreviewIndices.Add(first);
+        PollinationTargetPreviewIndices.Add(second);
+        PollinationTargetPreviewIndices.Add(third);
+    }
+
+    private static MeshRenderer? EnsurePollinationTargetPreviewRenderer()
+    {
+        if (PollinationTargetPreviewRenderer != null &&
+            PollinationTargetPreviewMeshFilter != null &&
+            PollinationTargetPreviewObject != null &&
+            PollinationTargetPreviewMesh != null)
+        {
+            return PollinationTargetPreviewRenderer;
+        }
+
+        PollinationTargetPreviewObject = new GameObject("Groundwork_BeehivePollinationTargetPreview")
+        {
+            hideFlags = HideFlags.DontSave
+        };
+        PollinationTargetPreviewMeshFilter = PollinationTargetPreviewObject.AddComponent<MeshFilter>();
+        PollinationTargetPreviewRenderer = PollinationTargetPreviewObject.AddComponent<MeshRenderer>();
+        Material? material = GetPollinationPreviewMaterial();
+        if (material != null)
+        {
+            PollinationTargetPreviewRenderer.sharedMaterial = material;
+        }
+
+        PollinationTargetPreviewRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        PollinationTargetPreviewRenderer.receiveShadows = false;
+        PollinationTargetPreviewMesh = new Mesh
+        {
+            name = "Groundwork_BeehivePollinationTargetPreviewMesh",
+            hideFlags = HideFlags.DontSave
+        };
+        PollinationTargetPreviewMesh.MarkDynamic();
+        PollinationTargetPreviewMeshFilter.sharedMesh = PollinationTargetPreviewMesh;
+        PollinationTargetPreviewObject.SetActive(false);
+        return PollinationTargetPreviewRenderer;
+    }
+
+    private static Material? GetPollinationPreviewMaterial()
+    {
+        if (PollinationPreviewMaterial != null)
+        {
+            return PollinationPreviewMaterial;
+        }
+
+        Shader shader = Shader.Find("Sprites/Default") ??
+                        Shader.Find("Legacy Shaders/Particles/Alpha Blended") ??
+                        Shader.Find("Standard");
+        if (shader == null)
+        {
+            return null;
+        }
+
+        PollinationPreviewMaterial = new Material(shader)
+        {
+            color = Color.white,
+            hideFlags = HideFlags.DontSave
+        };
+        return PollinationPreviewMaterial;
+    }
+
+    private static void HidePollinationRangePreview()
+    {
+        if (PollinationRangePreviewObject != null)
+        {
+            PollinationRangePreviewObject.SetActive(false);
+        }
+
+        PollinationRangePreviewHive = null;
+        PollinationRangePreviewRadius = -1f;
+        _nextPollinationRangePreviewRefreshAt = 0f;
+        _pollinationRangePreviewHasGeometry = false;
+    }
+
+    private static void HidePollinationTargetPreview()
+    {
+        if (PollinationTargetPreviewObject != null)
+        {
+            PollinationTargetPreviewObject.SetActive(false);
+        }
+
+        PollinationTargetPreviewHive = null;
+        _nextPollinationTargetPreviewRefreshAt = 0f;
+        _pollinationTargetPreviewActive = false;
     }
 
     // Beehive hover text and harvest bookkeeping.
@@ -286,15 +830,101 @@ internal static class BeehivePollinationSystem
 
     internal static float GetProductionSpeedMultiplier(Beehive beehive, bool unloadedCatchup = false)
     {
+        return GetProductionSpeedMultiplierCore(
+            beehive,
+            unloadedCatchup,
+            useLegacyCoverCurve: false,
+            evaluateProductionState: false,
+            out _);
+    }
+
+    internal static float GetProductionSpeedMultiplier(
+        Beehive beehive,
+        bool unloadedCatchup,
+        out bool canProcessProduction)
+    {
+        return GetProductionSpeedMultiplierCore(
+            beehive,
+            unloadedCatchup,
+            useLegacyCoverCurve: false,
+            evaluateProductionState: true,
+            out canProcessProduction);
+    }
+
+    internal static float PrepareProductionThreshold(
+        Beehive beehive,
+        float multiplier,
+        bool canProcessProduction)
+    {
+        if (beehive == null)
+        {
+            return 0f;
+        }
+
+        float baseSecondsPerHoney = beehive.m_secPerUnit;
+        if (baseSecondsPerHoney <= 0f || multiplier <= ProductThresholdEpsilon)
+        {
+            return baseSecondsPerHoney;
+        }
+
+        float currentThreshold = baseSecondsPerHoney / multiplier;
+        ZDO? zdo = GetZdo(beehive);
+        if (zdo == null || !beehive.m_nview.IsOwner() || !canProcessProduction)
+        {
+            return currentThreshold;
+        }
+
+        float previousThreshold = ResolvePreviousProductThreshold(
+            beehive,
+            zdo,
+            baseSecondsPerHoney,
+            currentThreshold);
+        bool thresholdChanged = !ThresholdsApproximatelyEqual(previousThreshold, currentThreshold);
+        if (thresholdChanged)
+        {
+            // s_product remains raw seconds; convert it so the completed fraction does not change with the rate.
+            float product = zdo.GetFloat(ZDOVars.s_product);
+            float projectedProduct = ProjectProductToThreshold(product, previousThreshold, currentThreshold);
+            if (!Mathf.Approximately(product, projectedProduct))
+            {
+                zdo.Set(ZDOVars.s_product, projectedProduct);
+            }
+        }
+
+        float storedThreshold = zdo.GetFloat(ProductThresholdKey, 0f);
+        if (!IsValidProductThreshold(storedThreshold) || thresholdChanged)
+        {
+            zdo.Set(ProductThresholdKey, currentThreshold);
+        }
+
+        return currentThreshold;
+    }
+
+    private static float GetProductionSpeedMultiplierCore(
+        Beehive beehive,
+        bool unloadedCatchup,
+        bool useLegacyCoverCurve,
+        bool evaluateProductionState,
+        out bool canProcessProduction)
+    {
+        canProcessProduction = false;
         if (beehive == null || !IsValid(beehive))
         {
             return 1f;
         }
 
+        bool biomeAllowed = !evaluateProductionState || IsBiomeAllowed(beehive);
+        canProcessProduction = evaluateProductionState && biomeAllowed && beehive.m_maxCover <= 0f;
         float multiplier = 1f;
         if (TryGetCoverPercentage(beehive, out float coverPercentage))
         {
-            float coverMultiplier = GetCoverProductionMultiplier(beehive, coverPercentage);
+            canProcessProduction = evaluateProductionState &&
+                                   biomeAllowed &&
+                                   HasFreeSpace(beehive, coverPercentage);
+            float coverMultiplier = GetCoverProductionMultiplier(
+                beehive,
+                coverPercentage,
+                useLegacyCoverCurve);
             multiplier *= unloadedCatchup ? ApplyUnloadedCatchupEffectiveness(coverMultiplier) : coverMultiplier;
         }
 
@@ -305,6 +935,72 @@ internal static class BeehivePollinationSystem
         multiplier *= GetNightProductionMultiplier(unloadedCatchup);
         multiplier *= EnvironmentEffectSystem.GetBeehiveRainHoneyRate(unloadedCatchup);
         return Mathf.Max(0f, multiplier);
+    }
+
+    private static float ResolvePreviousProductThreshold(
+        Beehive beehive,
+        ZDO zdo,
+        float baseSecondsPerHoney,
+        float currentThreshold)
+    {
+        float storedThreshold = zdo.GetFloat(ProductThresholdKey, 0f);
+        if (IsValidProductThreshold(storedThreshold))
+        {
+            return storedThreshold;
+        }
+
+        // A tended level proves that this hive was already managed by Groundwork v1.1.1.
+        // Otherwise prefer vanilla's base threshold so a first install cannot accelerate existing progress.
+        if (zdo.GetFloat(TendedFarmingLevelKey, -1f) < 0f)
+        {
+            return baseSecondsPerHoney;
+        }
+
+        // v1.1.1 stored raw product seconds against the loaded quadratic-cover threshold. An unloaded
+        // catch-up interval starts after that stored fraction, so it must not redefine the legacy fraction.
+        float legacyMultiplier = GetProductionSpeedMultiplierCore(
+            beehive,
+            unloadedCatchup: false,
+            useLegacyCoverCurve: true,
+            evaluateProductionState: false,
+            out _);
+        return legacyMultiplier > ProductThresholdEpsilon
+            ? baseSecondsPerHoney / legacyMultiplier
+            : currentThreshold;
+    }
+
+    private static float ProjectProductToThreshold(
+        float product,
+        float previousThreshold,
+        float currentThreshold)
+    {
+        if (float.IsNaN(product) || float.IsInfinity(product))
+        {
+            return 0f;
+        }
+
+        if (product <= 0f ||
+            previousThreshold <= ProductThresholdEpsilon ||
+            currentThreshold <= ProductThresholdEpsilon)
+        {
+            return Mathf.Max(0f, product);
+        }
+
+        float progress = Mathf.Clamp01(product / previousThreshold);
+        return progress * currentThreshold;
+    }
+
+    private static bool ThresholdsApproximatelyEqual(float left, float right)
+    {
+        float scale = Mathf.Max(1f, Mathf.Max(Mathf.Abs(left), Mathf.Abs(right)));
+        return Mathf.Abs(left - right) <= ProductThresholdEpsilon * scale;
+    }
+
+    private static bool IsValidProductThreshold(float threshold)
+    {
+        return threshold > ProductThresholdEpsilon &&
+               !float.IsNaN(threshold) &&
+               !float.IsInfinity(threshold);
     }
 
     internal static bool ShouldUseUnloadedProductionCatchup(Beehive beehive)
@@ -425,7 +1121,15 @@ internal static class BeehivePollinationSystem
 
         honeyRateMultiplier = multiplier;
         float effectiveSecondsPerHoney = beehive.m_secPerUnit / Mathf.Max(0.001f, multiplier);
-        float product = zdo.GetFloat(ZDOVars.s_product);
+        float previousThreshold = ResolvePreviousProductThreshold(
+            beehive,
+            zdo,
+            beehive.m_secPerUnit,
+            effectiveSecondsPerHoney);
+        float product = ProjectProductToThreshold(
+            zdo.GetFloat(ZDOVars.s_product),
+            previousThreshold,
+            effectiveSecondsPerHoney);
         float elapsed = GetSecondsSinceLastUpdate(zdo);
         float remainingSeconds = Mathf.Max(0f, effectiveSecondsPerHoney - product - elapsed);
         return GroundworkLocalization.FormatDuration(remainingSeconds);
@@ -910,7 +1614,10 @@ internal static class BeehivePollinationSystem
                FarmingSkillSystem.IsForagingTarget(pickable);
     }
 
-    private static float GetCoverProductionMultiplier(Beehive beehive, float coverPercentage)
+    private static float GetCoverProductionMultiplier(
+        Beehive beehive,
+        float coverPercentage,
+        bool useLegacyCoverCurve = false)
     {
         if (beehive == null || beehive.m_maxCover <= 0f || coverPercentage >= beehive.m_maxCover)
         {
@@ -918,7 +1625,8 @@ internal static class BeehivePollinationSystem
         }
 
         float openness = 1f - Mathf.Clamp01(coverPercentage / Mathf.Max(0.0001f, beehive.m_maxCover));
-        return Mathf.Lerp(1f, GroundworkToolsDomain.BeehiveCoverMaxSpeedMultiplier, openness * openness);
+        float interpolation = useLegacyCoverCurve ? openness * openness : openness;
+        return Mathf.Lerp(1f, GroundworkToolsDomain.BeehiveCoverMaxSpeedMultiplier, interpolation);
     }
 
     private static float GetNightProductionMultiplier(bool unloadedCatchup)
@@ -1129,6 +1837,11 @@ internal static class BeehivePollinationSystem
         return _pollinationMask;
     }
 
+    internal static bool IsPollinationSearchLayer(int layer)
+    {
+        return (GetPollinationMask() & (1 << layer)) != 0;
+    }
+
     private static int OverlapSphereWithExpandableBuffer(
         Vector3 center,
         float radius,
@@ -1189,6 +1902,18 @@ internal static class BeehivePollinationSystem
 }
 
 // Harmony patches.
+[HarmonyPatch(typeof(Player), "OnDestroy")]
+internal static class PlayerOnDestroyPollinationPreviewPatch
+{
+    private static void Prefix(Player __instance)
+    {
+        if (__instance == Player.m_localPlayer)
+        {
+            BeehivePollinationSystem.DestroyHoverPreview();
+        }
+    }
+}
+
 [HarmonyPatch(typeof(Beehive), nameof(Beehive.GetHoverText))]
 internal static class BeehiveGetHoverTextPollinationPatch
 {
@@ -1220,16 +1945,23 @@ internal static class BeehiveUpdateBeesPollinationPatch
         }
 
         __state = __instance.m_secPerUnit;
-        float multiplier = BeehivePollinationSystem.GetProductionSpeedMultiplier(__instance, unloadedCatchup);
+        float multiplier = BeehivePollinationSystem.GetProductionSpeedMultiplier(
+            __instance,
+            unloadedCatchup,
+            out bool canProcessProduction);
         if (multiplier <= 0.001f)
         {
             EnvironmentEffectSystem.PauseBeehiveProduction(__instance);
             return false;
         }
 
-        if (Mathf.Abs(multiplier - 1f) > 0.001f && __instance.m_secPerUnit > 0f)
+        float productionThreshold = BeehivePollinationSystem.PrepareProductionThreshold(
+            __instance,
+            multiplier,
+            canProcessProduction);
+        if (productionThreshold > 0f)
         {
-            __instance.m_secPerUnit /= multiplier;
+            __instance.m_secPerUnit = productionThreshold;
         }
 
         return true;

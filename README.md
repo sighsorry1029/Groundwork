@@ -61,6 +61,7 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
 - Empty hives give stronger pollination bonuses; the bonus fades as the hive fills with honey.
 - Growing nearby pollination targets can speed up honey production.
 - Beehive hover text shows honey capacity in the title, plus cover, pollination, night/rain rates, and next honey time with total rate.
+- One client setting controls both the centered terrain range guide and marker highlights around Plant/Pickable targets assigned to a hovered beehive. Raising a hive shrinks the guide, while slopes change it by direction. The range turns gray when unavailable or paused; assigned target markers turn gray while rain or night pauses pollination.
 
 ### Terrain Tools
 
@@ -182,6 +183,8 @@ Tuple schema:
 - `bonusAmount`: additional items on a successful roll.
 
 On a successful configured or native Farming bonus roll, Groundwork temporarily supplies fallback VFX/SFX when the Pickable's `m_bonusEffect` is empty. This includes vanilla Farming pickables such as `RaspberryBush` and configured targets such as Dandelion.
+
+When a foraging target hides all of its natural hover colliders after harvesting, Groundwork leaves a small circular faint-gray dot, sized like a terrain grid point, on the nearest ground or supporting surface. Hovering the dot shows the target name, active Farming, pollination, and rain factors, and the estimated respawn time. Its logical proxy stays at the original Pickable position so the visual projection does not change beehive pollination distance. Existing post-harvest hover targets and PlantEverything's custom picked visuals are preserved rather than duplicated.
 
 Omitted Pickable/Plant times, omitted Plant biomes, and `null` Farming positions use live prefab values, including values supplied by mods such as PlantEverything. Explicit times form the base before Farming, pollination, and rain multipliers.
 

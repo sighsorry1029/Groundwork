@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.2
+
+- Added a client-side beehive pollination preview with a terrain-following sphere footprint and highlights for assigned Plant and foraging Pickable targets, including active and paused coloring.
+- Added small faint-gray post-harvest surface markers and respawn-factor hover details for foraging Pickables whose natural hover target disappears, while preserving natural and PlantEverything visuals and keeping hidden targets discoverable by pollination.
+- Made custom circular and square terrain-tool range outlines follow slopes and heightmap seams, with a safe flat fallback.
+- Changed the beehive cover honey bonus from a quadratic to a linear curve and raised the new-config default maximum multiplier from x2 to x3 at 0% cover; existing saved values remain unchanged.
+- Fixed cover, pollination, night/rain, and loaded/unloaded rate changes retroactively speeding up or slowing down accumulated honey progress; the next-honey hover estimate now uses the same checkpointed progress fraction.
+
 ## 1.1.1
 
 - Reduced startup log noise by replacing per-prefab warnings for unnamed live Plant biome bits with one Debug summary, while preserving actionable warnings for other reference conflicts.

@@ -22,7 +22,7 @@ namespace Groundwork;
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.1.1";
+    internal const string ModVersion = "1.1.2";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
@@ -101,6 +101,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         RunShutdownStep(nameof(TerrainToolRangeSystem), TerrainToolRangeSystem.Shutdown);
         RunShutdownStep(nameof(PickaxeTerrainScalingSystem), PickaxeTerrainScalingSystem.Shutdown);
         RunShutdownStep(nameof(TerrainDigFloatingTextSystem), TerrainDigFloatingTextSystem.Clear);
+        RunShutdownStep(nameof(PickableRespawnHoverSystem), PickableRespawnHoverSystem.Shutdown);
         RunShutdownStep(nameof(FarmingSkillSystem), FarmingSkillSystem.Shutdown);
         RunShutdownStep(nameof(ZenBeehiveCompatSystem), ZenBeehiveCompatSystem.Shutdown);
         RunShutdownStep(nameof(BeehivePollinationSystem), BeehivePollinationSystem.Shutdown);
@@ -375,6 +376,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         internal ConfigEntry<float> BeehiveRainHoneyRate = null!;
         internal ConfigEntry<float> BeehivePollinationRadius = null!;
         internal ConfigEntry<int> BeehivePollinationMaxPlants = null!;
+        internal ConfigEntry<Toggle> BeehivePollinationPreview = null!;
         internal ConfigEntry<float> BeehivePollinationPlantGrowSpeedFactor = null!;
         internal ConfigEntry<float> BeehivePollinationForagingRespawnSpeedFactor = null!;
         internal ConfigEntry<float> BeehivePollinationHoneySpeedBonusPercentPerTarget = null!;
@@ -401,9 +403,10 @@ public class GroundworkPlugin : BaseUnityPlugin
 
             BeehiveCapacityFarmingLevelsPerBonusHoney = plugin.config(beehivesGroup, "Beehive Capacity Farming Levels Per Bonus Honey", 20, new ConfigDescription("Farming levels required for each +1 beehive honey capacity. 0 disables the capacity bonus.", new AcceptableValueRange<int>(0, 100)), synchronizedSetting: true);
             BeehiveFarmingSkillGainPerHoney = plugin.config(beehivesGroup, "Beehive Farming Skill Gain Per Honey", 0.25f, new ConfigDescription("Farming skill gain for each honey harvested from a beehive. 0 disables this bonus.", new AcceptableValueRange<float>(0f, 5f)), synchronizedSetting: true);
-            BeehiveCoverMaxSpeedMultiplier = plugin.config(beehivesGroup, "Beehive Cover Max Speed Multiplier", 2f, new ConfigDescription("Honey production multiplier at 0% cover. The bonus uses a fixed exponent 2 curve from x1 at the beehive max cover threshold to this value when fully open.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
+            BeehiveCoverMaxSpeedMultiplier = plugin.config(beehivesGroup, "Beehive Cover Max Speed Multiplier", 3f, new ConfigDescription("Honey production multiplier at 0% cover. The bonus scales linearly from x1 at the beehive max cover threshold to this value when fully open.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
             BeehiveNightHoneyRate = plugin.config(beehivesGroup, "Beehive Night Honey Rate", 0.5f, new ConfigDescription("Honey production rate at night. 1 is the vanilla value, 0.5 makes night production half speed, and 0 pauses night production. Unloaded catch-up uses an average day/night rate.", new AcceptableValueRange<float>(0f, 1f)), synchronizedSetting: true);
             BeehiveRainHoneyRate = plugin.config(beehivesGroup, "Beehive Rain Honey Rate", 0.5f, new ConfigDescription("Honey production rate while the current environment is wet. 1 is the vanilla value, 0.5 makes rain production half speed, and 0 pauses rain production. Rain is not accumulated during unloaded catch-up.", new AcceptableValueRange<float>(0f, 1f)), synchronizedSetting: true);
+            BeehivePollinationPreview = plugin.config(pollinationGroup, "Beehive Pollination Preview", Toggle.On, "If on, hovering a beehive draws both its centered terrain range guide and marker highlights around assigned Plant and foraging Pickable targets. Raising the beehive shrinks the range guide, and slopes change it by direction. If the ground directly below is outside the sphere, the centered guide is hidden. The range is gray while unavailable or paused; assigned target markers are gray while rain or night pauses pollination. Target colliders and assignment still determine the actual affected objects.", synchronizedSetting: false);
             BeehivePollinationRadius = plugin.config(pollinationGroup, "Beehive Pollination Radius", 3f, new ConfigDescription("Radius in meters for beehive pollination bonuses. 0 disables plant and foraging growth bonuses from beehives.", new AcceptableValueRange<float>(0f, 20f)), synchronizedSetting: true);
             BeehivePollinationMaxPlants = plugin.config(pollinationGroup, "Beehive Pollination Max Plants", 24, new ConfigDescription("Maximum nearby growing plants or foraging targets counted by one beehive for pollination.", new AcceptableValueRange<int>(0, 100)), synchronizedSetting: true);
             BeehivePollinationPlantGrowSpeedFactor = plugin.config(pollinationGroup, "Beehive Pollination Plant Grow Speed Factor", 2f, new ConfigDescription("Plant growth speed factor near an empty active beehive. The bonus fades to x1 as the beehive fills with honey.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);

@@ -15,8 +15,12 @@ namespace Groundwork;
 internal static class TerrainToolRangeSystem
 {
     private const int CustomPreviewSegmentCount = 96;
+    private const int CustomPreviewMaxSquareEdgeSegmentCount = 256;
+    private const float CustomPreviewTargetSquareSegmentLength = 1f;
     private const float CustomPreviewYOffset = 0.06f;
     private const float CustomPreviewLineWidth = 0.045f;
+    private const float CustomRangePreviewRefreshInterval = 0.25f;
+    private const float CustomRangePreviewHeightmapEdgeEpsilon = 0.001f;
     private const float CustomGridPreviewMarkerSize = 0.16f;
     private const int CustomGridPreviewMaxMarkers = 2048;
     private const float CustomGridPreviewRadiusEpsilon = 0.001f;
@@ -69,6 +73,13 @@ internal static class TerrainToolRangeSystem
     private static bool CustomGridPreviewSignatureValid;
     private static GridPreviewState? LastGridPreviewState;
     private static readonly List<Heightmap> CustomRangePreviewHeightmaps = [];
+    private static readonly List<Heightmap> CustomRangeSurfaceHeightmaps = [];
+    private static readonly List<Vector3> CustomRangePreviewPositions = [];
+    private static Vector3 CustomRangePreviewLastCenter;
+    private static float CustomRangePreviewLastRadius;
+    private static CustomRangePreviewShape CustomRangePreviewLastShape;
+    private static float CustomRangePreviewNextRefreshTime;
+    private static bool CustomRangePreviewGeometryValid;
     private static readonly List<Heightmap> CustomGridPreviewHeightmaps = [];
     private static readonly List<Vector3> CustomGridPreviewVertices = [];
     private static readonly List<int> CustomGridPreviewIndices = [];
@@ -342,6 +353,7 @@ internal static class TerrainToolRangeSystem
                 GetCurrentRange(placement.Rule),
                 Time.frameCount,
                 placement.ExpectedTool);
+            InvalidateCustomRangePreviewGeometry();
             InvalidateCustomGridPreview();
         }
 
@@ -623,6 +635,7 @@ internal static class TerrainToolRangeSystem
         CustomGridPreviewMesh = null;
         CustomRangePreviewGhost = null;
         CustomRangePreviewColor = FallbackPreviewRingColor;
+        InvalidateCustomRangePreviewGeometry();
         CustomGridPreviewSignature = 0;
         CustomGridPreviewSignatureValid = false;
         LastGridPreviewState = null;
@@ -1039,6 +1052,7 @@ internal static class TerrainToolRangeSystem
             RestoreHiddenPreviewVisuals();
             CustomRangePreviewGhost = ghost;
             CustomRangePreviewColor = SamplePreviewRingColor(ghost);
+            InvalidateCustomRangePreviewGeometry();
             HideVanillaPreviewVisuals(ghost);
         }
 
@@ -1090,6 +1104,7 @@ internal static class TerrainToolRangeSystem
         CustomRangePreviewLine.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         CustomRangePreviewLine.receiveShadows = false;
         CustomRangePreviewObject.SetActive(false);
+        InvalidateCustomRangePreviewGeometry();
         return CustomRangePreviewLine;
     }
 
@@ -1153,24 +1168,247 @@ internal static class TerrainToolRangeSystem
         lineRenderer.endColor = color;
         lineRenderer.widthMultiplier = CustomPreviewLineWidth;
 
-        if (shape == CustomRangePreviewShape.Square)
+        float currentTime = Time.realtimeSinceStartup;
+        bool geometryUnchanged = CustomRangePreviewGeometryValid &&
+                                 CustomRangePreviewLastCenter.x == center.x &&
+                                 CustomRangePreviewLastCenter.y == center.y &&
+                                 CustomRangePreviewLastCenter.z == center.z &&
+                                 CustomRangePreviewLastRadius == radius &&
+                                 CustomRangePreviewLastShape == shape;
+        if (geometryUnchanged && currentTime < CustomRangePreviewNextRefreshTime)
         {
-            lineRenderer.positionCount = 5;
-            lineRenderer.SetPosition(0, center + new Vector3(-radius, 0f, -radius));
-            lineRenderer.SetPosition(1, center + new Vector3(-radius, 0f, radius));
-            lineRenderer.SetPosition(2, center + new Vector3(radius, 0f, radius));
-            lineRenderer.SetPosition(3, center + new Vector3(radius, 0f, -radius));
-            lineRenderer.SetPosition(4, center + new Vector3(-radius, 0f, -radius));
             return;
         }
 
-        lineRenderer.positionCount = CustomPreviewSegmentCount + 1;
-        for (int index = 0; index <= CustomPreviewSegmentCount; index++)
+        CustomRangePreviewLastCenter = center;
+        CustomRangePreviewLastRadius = radius;
+        CustomRangePreviewLastShape = shape;
+        CustomRangePreviewNextRefreshTime = currentTime + CustomRangePreviewRefreshInterval;
+        CustomRangePreviewGeometryValid = true;
+
+        if (!TryBuildTerrainFollowingCustomRangePreview(center, radius, shape))
         {
-            float angle = index / (float)CustomPreviewSegmentCount * Mathf.PI * 2f;
-            Vector3 point = center + new Vector3(Mathf.Cos(angle) * radius, 0f, Mathf.Sin(angle) * radius);
-            lineRenderer.SetPosition(index, point);
+            BuildFlatCustomRangePreview(center, radius, shape);
         }
+
+        lineRenderer.positionCount = CustomRangePreviewPositions.Count;
+        for (int index = 0; index < CustomRangePreviewPositions.Count; index++)
+        {
+            lineRenderer.SetPosition(index, CustomRangePreviewPositions[index]);
+        }
+    }
+
+    private static bool TryBuildTerrainFollowingCustomRangePreview(Vector3 center, float radius, CustomRangePreviewShape shape)
+    {
+        CustomRangePreviewPositions.Clear();
+        CustomRangeSurfaceHeightmaps.Clear();
+        Heightmap.FindHeightmap(center, radius + 1f, CustomRangeSurfaceHeightmaps);
+        for (int index = CustomRangeSurfaceHeightmaps.Count - 1; index >= 0; index--)
+        {
+            if (!IsCustomRangeSurfaceHeightmapReady(CustomRangeSurfaceHeightmaps[index]))
+            {
+                CustomRangeSurfaceHeightmaps.RemoveAt(index);
+            }
+        }
+
+        try
+        {
+            if (CustomRangeSurfaceHeightmaps.Count == 0)
+            {
+                return false;
+            }
+
+            if (shape == CustomRangePreviewShape.Square)
+            {
+                int edgeSegmentCount = GetCustomRangeSquareEdgeSegmentCount(radius);
+                for (int edge = 0; edge < 4; edge++)
+                {
+                    Vector3 from = GetCustomRangeSquareCorner(center, radius, edge);
+                    Vector3 to = GetCustomRangeSquareCorner(center, radius, edge + 1);
+                    for (int segment = 0; segment < edgeSegmentCount; segment++)
+                    {
+                        Vector3 point = Vector3.Lerp(from, to, segment / (float)edgeSegmentCount);
+                        if (!TryAddTerrainFollowingCustomRangePoint(point))
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                for (int index = 0; index < CustomPreviewSegmentCount; index++)
+                {
+                    float angle = index / (float)CustomPreviewSegmentCount * Mathf.PI * 2f;
+                    Vector3 point = center + new Vector3(Mathf.Cos(angle) * radius, 0f, Mathf.Sin(angle) * radius);
+                    if (!TryAddTerrainFollowingCustomRangePoint(point))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (CustomRangePreviewPositions.Count == 0)
+            {
+                return false;
+            }
+
+            CustomRangePreviewPositions.Add(CustomRangePreviewPositions[0]);
+            return true;
+        }
+        finally
+        {
+            CustomRangeSurfaceHeightmaps.Clear();
+        }
+    }
+
+    private static bool TryAddTerrainFollowingCustomRangePoint(Vector3 point)
+    {
+        if (!TryGetCustomRangeSurfaceHeight(point, out float terrainHeight))
+        {
+            return false;
+        }
+
+        point.y = terrainHeight + CustomPreviewYOffset;
+        CustomRangePreviewPositions.Add(point);
+        return true;
+    }
+
+    private static bool TryGetCustomRangeSurfaceHeight(Vector3 point, out float height)
+    {
+        Heightmap? selectedHeightmap = null;
+        Vector3 selectedLocalPoint = default;
+        float selectedGridX = 0f;
+        float selectedGridZ = 0f;
+        float selectedInteriorMargin = float.NegativeInfinity;
+        foreach (Heightmap heightmap in CustomRangeSurfaceHeightmaps)
+        {
+            Vector3 localPoint = heightmap.transform.InverseTransformPoint(point);
+            float halfWidth = heightmap.m_width * heightmap.m_scale * 0.5f;
+            float gridX = (localPoint.x + halfWidth) / heightmap.m_scale;
+            float gridZ = (localPoint.z + halfWidth) / heightmap.m_scale;
+            if (float.IsNaN(gridX) || float.IsInfinity(gridX) ||
+                float.IsNaN(gridZ) || float.IsInfinity(gridZ) ||
+                gridX < -CustomRangePreviewHeightmapEdgeEpsilon ||
+                gridZ < -CustomRangePreviewHeightmapEdgeEpsilon ||
+                gridX > heightmap.m_width + CustomRangePreviewHeightmapEdgeEpsilon ||
+                gridZ > heightmap.m_width + CustomRangePreviewHeightmapEdgeEpsilon)
+            {
+                continue;
+            }
+
+            gridX = Mathf.Clamp(gridX, 0f, heightmap.m_width);
+            gridZ = Mathf.Clamp(gridZ, 0f, heightmap.m_width);
+            float interiorMargin = Mathf.Min(
+                Mathf.Min(gridX, heightmap.m_width - gridX),
+                Mathf.Min(gridZ, heightmap.m_width - gridZ)) * heightmap.m_scale;
+            // Near a shared edge, prefer the tile that contains the point most deeply.
+            if (selectedHeightmap != null && interiorMargin <= selectedInteriorMargin)
+            {
+                continue;
+            }
+
+            selectedHeightmap = heightmap;
+            selectedLocalPoint = localPoint;
+            selectedGridX = gridX;
+            selectedGridZ = gridZ;
+            selectedInteriorMargin = interiorMargin;
+        }
+
+        if (selectedHeightmap == null)
+        {
+            height = 0f;
+            return false;
+        }
+
+        int cellX = Mathf.Min(Mathf.FloorToInt(selectedGridX), selectedHeightmap.m_width - 1);
+        int cellZ = Mathf.Min(Mathf.FloorToInt(selectedGridZ), selectedHeightmap.m_width - 1);
+        float cellXFactor = selectedGridX - cellX;
+        float cellZFactor = selectedGridZ - cellZ;
+        float height00 = selectedHeightmap.GetHeight(cellX, cellZ);
+        float height10 = selectedHeightmap.GetHeight(cellX + 1, cellZ);
+        float height01 = selectedHeightmap.GetHeight(cellX, cellZ + 1);
+        float height11 = selectedHeightmap.GetHeight(cellX + 1, cellZ + 1);
+        // Match Heightmap.RebuildCollisionMesh's v00-v01-v10 / v10-v01-v11 diagonal.
+        float localHeight = cellXFactor + cellZFactor <= 1f
+            ? height00 + (height10 - height00) * cellXFactor + (height01 - height00) * cellZFactor
+            : height11 + (height01 - height11) * (1f - cellXFactor) +
+              (height10 - height11) * (1f - cellZFactor);
+        height = selectedHeightmap.transform.TransformPoint(
+            new Vector3(selectedLocalPoint.x, localHeight, selectedLocalPoint.z)).y;
+        return true;
+    }
+
+    private static bool IsCustomRangeSurfaceHeightmapReady(Heightmap? heightmap)
+    {
+        if (heightmap == null || !heightmap.isActiveAndEnabled || heightmap.IsDistantLod ||
+            heightmap.m_width <= 0 || heightmap.m_scale <= 0f ||
+            float.IsNaN(heightmap.m_scale) || float.IsInfinity(heightmap.m_scale))
+        {
+            return false;
+        }
+
+        int vertexWidth = heightmap.m_width + 1;
+        return heightmap.m_heights.Count == vertexWidth * vertexWidth;
+    }
+
+    private static void BuildFlatCustomRangePreview(Vector3 center, float radius, CustomRangePreviewShape shape)
+    {
+        CustomRangePreviewPositions.Clear();
+        if (shape == CustomRangePreviewShape.Square)
+        {
+            int edgeSegmentCount = GetCustomRangeSquareEdgeSegmentCount(radius);
+            for (int edge = 0; edge < 4; edge++)
+            {
+                Vector3 from = GetCustomRangeSquareCorner(center, radius, edge);
+                Vector3 to = GetCustomRangeSquareCorner(center, radius, edge + 1);
+                for (int segment = 0; segment < edgeSegmentCount; segment++)
+                {
+                    CustomRangePreviewPositions.Add(Vector3.Lerp(from, to, segment / (float)edgeSegmentCount));
+                }
+            }
+        }
+        else
+        {
+            for (int index = 0; index < CustomPreviewSegmentCount; index++)
+            {
+                float angle = index / (float)CustomPreviewSegmentCount * Mathf.PI * 2f;
+                CustomRangePreviewPositions.Add(
+                    center + new Vector3(Mathf.Cos(angle) * radius, 0f, Mathf.Sin(angle) * radius));
+            }
+        }
+
+        if (CustomRangePreviewPositions.Count > 0)
+        {
+            CustomRangePreviewPositions.Add(CustomRangePreviewPositions[0]);
+        }
+    }
+
+    private static int GetCustomRangeSquareEdgeSegmentCount(float radius)
+    {
+        return Mathf.Clamp(
+            Mathf.CeilToInt(radius * 2f / CustomPreviewTargetSquareSegmentLength),
+            1,
+            CustomPreviewMaxSquareEdgeSegmentCount);
+    }
+
+    private static Vector3 GetCustomRangeSquareCorner(Vector3 center, float radius, int corner)
+    {
+        return (corner % 4) switch
+        {
+            0 => center + new Vector3(-radius, 0f, -radius),
+            1 => center + new Vector3(-radius, 0f, radius),
+            2 => center + new Vector3(radius, 0f, radius),
+            _ => center + new Vector3(radius, 0f, -radius)
+        };
+    }
+
+    private static void InvalidateCustomRangePreviewGeometry()
+    {
+        CustomRangePreviewGeometryValid = false;
+        CustomRangePreviewNextRefreshTime = 0f;
+        CustomRangeSurfaceHeightmaps.Clear();
+        CustomRangePreviewPositions.Clear();
     }
 
     private static void UpdateCustomGridPreview(IReadOnlyList<TerrainOp> terrainOps, Color color)
@@ -1952,6 +2190,7 @@ internal static class TerrainToolRangeSystem
         RestoreHiddenPreviewVisuals();
         CustomRangePreviewGhost = null;
         LastGridPreviewState = null;
+        InvalidateCustomRangePreviewGeometry();
         InvalidateCustomGridPreview();
         if (CustomRangePreviewObject != null)
         {

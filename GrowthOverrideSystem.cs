@@ -580,6 +580,7 @@ internal static class GrowthOverrideSystem
         _pickableRules = pickableRules;
         _plantRules = plantRules;
         _lastAppliedNormalizedYaml = normalizedYaml;
+        PickableRespawnHoverSystem.RefreshLoadedMarkers();
         BeehivePollinationSystem.InvalidateTargetCaches();
     }
 

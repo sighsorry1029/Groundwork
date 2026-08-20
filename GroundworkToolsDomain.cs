@@ -69,6 +69,9 @@ internal static class GroundworkToolsDomain
     internal static int BeehivePollinationMaxPlants =>
         Mathf.Max(0, Farming.BeehivePollinationMaxPlants?.Value ?? 0);
 
+    internal static bool BeehivePollinationPreviewEnabled =>
+        Farming.BeehivePollinationPreview?.Value == GroundworkPlugin.Toggle.On;
+
     internal static float BeehivePollinationPlantGrowSpeedFactor =>
         Mathf.Max(1f, Farming.BeehivePollinationPlantGrowSpeedFactor?.Value ?? 1f);
 
