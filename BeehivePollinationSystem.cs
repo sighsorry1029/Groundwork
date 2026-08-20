@@ -833,7 +833,6 @@ internal static class BeehivePollinationSystem
         return GetProductionSpeedMultiplierCore(
             beehive,
             unloadedCatchup,
-            useLegacyCoverCurve: false,
             evaluateProductionState: false,
             out _);
     }
@@ -846,7 +845,6 @@ internal static class BeehivePollinationSystem
         return GetProductionSpeedMultiplierCore(
             beehive,
             unloadedCatchup,
-            useLegacyCoverCurve: false,
             evaluateProductionState: true,
             out canProcessProduction);
     }
@@ -874,11 +872,7 @@ internal static class BeehivePollinationSystem
             return currentThreshold;
         }
 
-        float previousThreshold = ResolvePreviousProductThreshold(
-            beehive,
-            zdo,
-            baseSecondsPerHoney,
-            currentThreshold);
+        float previousThreshold = ResolvePreviousProductThreshold(zdo, currentThreshold);
         bool thresholdChanged = !ThresholdsApproximatelyEqual(previousThreshold, currentThreshold);
         if (thresholdChanged)
         {
@@ -903,7 +897,6 @@ internal static class BeehivePollinationSystem
     private static float GetProductionSpeedMultiplierCore(
         Beehive beehive,
         bool unloadedCatchup,
-        bool useLegacyCoverCurve,
         bool evaluateProductionState,
         out bool canProcessProduction)
     {
@@ -921,10 +914,7 @@ internal static class BeehivePollinationSystem
             canProcessProduction = evaluateProductionState &&
                                    biomeAllowed &&
                                    HasFreeSpace(beehive, coverPercentage);
-            float coverMultiplier = GetCoverProductionMultiplier(
-                beehive,
-                coverPercentage,
-                useLegacyCoverCurve);
+            float coverMultiplier = GetCoverProductionMultiplier(beehive, coverPercentage);
             multiplier *= unloadedCatchup ? ApplyUnloadedCatchupEffectiveness(coverMultiplier) : coverMultiplier;
         }
 
@@ -937,36 +927,10 @@ internal static class BeehivePollinationSystem
         return Mathf.Max(0f, multiplier);
     }
 
-    private static float ResolvePreviousProductThreshold(
-        Beehive beehive,
-        ZDO zdo,
-        float baseSecondsPerHoney,
-        float currentThreshold)
+    private static float ResolvePreviousProductThreshold(ZDO zdo, float currentThreshold)
     {
         float storedThreshold = zdo.GetFloat(ProductThresholdKey, 0f);
-        if (IsValidProductThreshold(storedThreshold))
-        {
-            return storedThreshold;
-        }
-
-        // A tended level proves that this hive was already managed by Groundwork v1.1.1.
-        // Otherwise prefer vanilla's base threshold so a first install cannot accelerate existing progress.
-        if (zdo.GetFloat(TendedFarmingLevelKey, -1f) < 0f)
-        {
-            return baseSecondsPerHoney;
-        }
-
-        // v1.1.1 stored raw product seconds against the loaded quadratic-cover threshold. An unloaded
-        // catch-up interval starts after that stored fraction, so it must not redefine the legacy fraction.
-        float legacyMultiplier = GetProductionSpeedMultiplierCore(
-            beehive,
-            unloadedCatchup: false,
-            useLegacyCoverCurve: true,
-            evaluateProductionState: false,
-            out _);
-        return legacyMultiplier > ProductThresholdEpsilon
-            ? baseSecondsPerHoney / legacyMultiplier
-            : currentThreshold;
+        return IsValidProductThreshold(storedThreshold) ? storedThreshold : currentThreshold;
     }
 
     private static float ProjectProductToThreshold(
@@ -984,6 +948,11 @@ internal static class BeehivePollinationSystem
             currentThreshold <= ProductThresholdEpsilon)
         {
             return Mathf.Max(0f, product);
+        }
+
+        if (ThresholdsApproximatelyEqual(previousThreshold, currentThreshold))
+        {
+            return product;
         }
 
         float progress = Mathf.Clamp01(product / previousThreshold);
@@ -1121,11 +1090,7 @@ internal static class BeehivePollinationSystem
 
         honeyRateMultiplier = multiplier;
         float effectiveSecondsPerHoney = beehive.m_secPerUnit / Mathf.Max(0.001f, multiplier);
-        float previousThreshold = ResolvePreviousProductThreshold(
-            beehive,
-            zdo,
-            beehive.m_secPerUnit,
-            effectiveSecondsPerHoney);
+        float previousThreshold = ResolvePreviousProductThreshold(zdo, effectiveSecondsPerHoney);
         float product = ProjectProductToThreshold(
             zdo.GetFloat(ZDOVars.s_product),
             previousThreshold,
@@ -1614,10 +1579,7 @@ internal static class BeehivePollinationSystem
                FarmingSkillSystem.IsForagingTarget(pickable);
     }
 
-    private static float GetCoverProductionMultiplier(
-        Beehive beehive,
-        float coverPercentage,
-        bool useLegacyCoverCurve = false)
+    private static float GetCoverProductionMultiplier(Beehive beehive, float coverPercentage)
     {
         if (beehive == null || beehive.m_maxCover <= 0f || coverPercentage >= beehive.m_maxCover)
         {
@@ -1625,8 +1587,7 @@ internal static class BeehivePollinationSystem
         }
 
         float openness = 1f - Mathf.Clamp01(coverPercentage / Mathf.Max(0.0001f, beehive.m_maxCover));
-        float interpolation = useLegacyCoverCurve ? openness * openness : openness;
-        return Mathf.Lerp(1f, GroundworkToolsDomain.BeehiveCoverMaxSpeedMultiplier, interpolation);
+        return Mathf.Lerp(1f, GroundworkToolsDomain.BeehiveCoverMaxSpeedMultiplier, openness);
     }
 
     private static float GetNightProductionMultiplier(bool unloadedCatchup)

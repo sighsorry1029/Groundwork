@@ -6,7 +6,7 @@
 - Added small faint-gray post-harvest surface markers and respawn-factor hover details for foraging Pickables whose natural hover target disappears, while preserving natural and PlantEverything visuals and keeping hidden targets discoverable by pollination.
 - Made custom circular and square terrain-tool range outlines follow slopes and heightmap seams, with a safe flat fallback.
 - Changed the beehive cover honey bonus from a quadratic to a linear curve and raised the new-config default maximum multiplier from x2 to x3 at 0% cover; existing saved values remain unchanged.
-- Fixed cover, pollination, night/rain, and loaded/unloaded rate changes retroactively speeding up or slowing down accumulated honey progress; the next-honey hover estimate now uses the same checkpointed progress fraction.
+- Fixed cover, pollination, night/rain, and loaded/unloaded rate changes retroactively speeding up or slowing down accumulated honey progress; the next-honey hover estimate now uses the same checkpointed progress fraction. Hives without an existing progress checkpoint adopt their current partial timer without legacy conversion, so the first honey time may shift once after upgrading.
 
 ## 1.1.1
 
