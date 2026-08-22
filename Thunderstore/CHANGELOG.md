@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.3
+
+- Removed the world-space post-harvest dot for respawning foraging Pickables while retaining a 0.32 m invisible hover and pollination proxy at the original position; targets without a respawn timer no longer receive a proxy, and natural or PlantEverything visuals remain untouched.
+
 ## 1.1.2
 
 - Added a client-side beehive pollination preview with a terrain-following sphere footprint and highlights for assigned Plant and foraging Pickable targets, including active and paused coloring.

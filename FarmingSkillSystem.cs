@@ -1323,7 +1323,7 @@ internal static class PickableSetPickedForagingSkillPatch
     [HarmonyAfter("advize.PlantEverything")]
     private static void Postfix(Pickable __instance, bool picked)
     {
-        PickableRespawnHoverSystem.RefreshMarker(__instance);
+        PickableRespawnHoverSystem.RefreshHoverProxy(__instance);
         FarmingSkillSystem.EnsureForagingPickerSkill(__instance, picked);
         FarmingSkillSystem.ResetForagingDynamicProgress(__instance, picked);
     }

@@ -184,7 +184,7 @@ Tuple schema:
 
 On a successful configured or native Farming bonus roll, Groundwork temporarily supplies fallback VFX/SFX when the Pickable's `m_bonusEffect` is empty. This includes vanilla Farming pickables such as `RaspberryBush` and configured targets such as Dandelion.
 
-When a foraging target hides all of its natural hover colliders after harvesting, Groundwork leaves a small circular faint-gray dot, sized like a terrain grid point, on the nearest ground or supporting surface. Hovering the dot shows the target name, active Farming, pollination, and rain factors, and the estimated respawn time. Its logical proxy stays at the original Pickable position so the visual projection does not change beehive pollination distance. Existing post-harvest hover targets and PlantEverything's custom picked visuals are preserved rather than duplicated.
+When a respawning foraging target hides all of its natural hover colliders after harvesting, Groundwork keeps an invisible hover proxy at the original Pickable position. Aiming at that position shows the target name, active Farming, pollination, and rain factors, and the estimated respawn time. The same proxy keeps the hidden target discoverable by beehive pollination without adding a world-space marker. Existing post-harvest hover targets and PlantEverything's custom picked visuals are preserved.
 
 Omitted Pickable/Plant times, omitted Plant biomes, and `null` Farming positions use live prefab values, including values supplied by mods such as PlantEverything. Explicit times form the base before Farming, pollination, and rain multipliers.
 
