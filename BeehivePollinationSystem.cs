@@ -723,12 +723,12 @@ internal static class BeehivePollinationSystem
             ? GroundworkLocalization.Format(
                 "groundwork_beehive_next_honey_rate",
                 "Next honey: {0} (Honey rate {1})",
-                nextHoney,
-                FormatMultiplier(honeyRateMultiplier))
+                HighlightValue(nextHoney),
+                HighlightValue(FormatMultiplier(honeyRateMultiplier)))
             : GroundworkLocalization.Format(
                 "groundwork_beehive_next_honey",
                 "Next honey: {0}",
-                nextHoney);
+                HighlightValue(nextHoney));
         AppendLine(ref hoverText, Colorize(nextHoneyLine));
         AppendHoverExplanation(beehive, ref hoverText);
     }
@@ -1671,7 +1671,7 @@ internal static class BeehivePollinationSystem
                     : "More nearby growing plants or forage targets speed up honey production.";
             AppendLine(
                 ref hoverText,
-                Colorize(GroundworkLocalization.Text(
+                ColorizeExplanation(GroundworkLocalization.Text(
                     honeyExplanationKey,
                     honeyExplanationFallback)));
         }
@@ -1697,7 +1697,7 @@ internal static class BeehivePollinationSystem
                 : "Less stored honey speeds up nearby foraging target respawn.";
         AppendLine(
             ref hoverText,
-            Colorize(GroundworkLocalization.Text(
+            ColorizeExplanation(GroundworkLocalization.Text(
                 growthExplanationKey,
                 growthExplanationFallback)));
     }
@@ -1914,6 +1914,16 @@ internal static class BeehivePollinationSystem
     private static string Colorize(string text)
     {
         return "<color=#a8e6a1>" + text + "</color>";
+    }
+
+    private static string HighlightValue(string text)
+    {
+        return "<color=yellow>" + text + "</color>";
+    }
+
+    private static string ColorizeExplanation(string text)
+    {
+        return "<color=orange>" + text + "</color>";
     }
 
     private static string FormatPercent(float value)
