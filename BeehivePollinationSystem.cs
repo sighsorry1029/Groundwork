@@ -730,6 +730,7 @@ internal static class BeehivePollinationSystem
                 "Next honey: {0}",
                 nextHoney);
         AppendLine(ref hoverText, Colorize(nextHoneyLine));
+        AppendHoverExplanation(beehive, ref hoverText);
     }
 
     internal static void StoreTendedFarmingLevel(Beehive beehive, long sender)
@@ -1634,6 +1635,71 @@ internal static class BeehivePollinationSystem
         }
 
         AppendLine(ref hoverText, Colorize(string.Join("  ", parts)));
+    }
+
+    private static void AppendHoverExplanation(Beehive beehive, ref string hoverText)
+    {
+        if (!GroundworkToolsDomain.BeehiveHoverExplanationEnabled)
+        {
+            return;
+        }
+
+        bool coverSpeedsHoney =
+            beehive.m_maxCover > 0f &&
+            beehive.m_coverPoint != null &&
+            GroundworkToolsDomain.BeehiveCoverMaxSpeedMultiplier > 1.001f;
+        bool pollinationTargetsConfigured =
+            GroundworkToolsDomain.BeehivePollinationRadius > 0f &&
+            GroundworkToolsDomain.BeehivePollinationMaxPlants > 0;
+        bool targetsSpeedHoney =
+            pollinationTargetsConfigured &&
+            GroundworkToolsDomain.BeehivePollinationHoneySpeedBonusPercentPerTarget > 0.001f;
+
+        string? honeyExplanationKey = coverSpeedsHoney && targetsSpeedHoney
+            ? "groundwork_beehive_explanation_honey_both"
+            : coverSpeedsHoney
+                ? "groundwork_beehive_explanation_honey_cover"
+                : targetsSpeedHoney
+                    ? "groundwork_beehive_explanation_honey_targets"
+                    : null;
+        if (honeyExplanationKey != null)
+        {
+            string honeyExplanationFallback = coverSpeedsHoney && targetsSpeedHoney
+                ? "More openness and more nearby growing plants or forage targets speed up honey production."
+                : coverSpeedsHoney
+                    ? "More openness speeds up honey production."
+                    : "More nearby growing plants or forage targets speed up honey production.";
+            AppendLine(
+                ref hoverText,
+                Colorize(GroundworkLocalization.Text(
+                    honeyExplanationKey,
+                    honeyExplanationFallback)));
+        }
+
+        bool storedHoneySpeedsPlants = IsPlantGrowthBonusConfigured();
+        bool storedHoneySpeedsForaging = IsForagingRespawnBonusConfigured();
+        string? growthExplanationKey = storedHoneySpeedsPlants && storedHoneySpeedsForaging
+            ? "groundwork_beehive_explanation_growth_both"
+            : storedHoneySpeedsPlants
+                ? "groundwork_beehive_explanation_growth_plants"
+                : storedHoneySpeedsForaging
+                    ? "groundwork_beehive_explanation_growth_foraging"
+                    : null;
+        if (growthExplanationKey == null)
+        {
+            return;
+        }
+
+        string growthExplanationFallback = storedHoneySpeedsPlants && storedHoneySpeedsForaging
+            ? "Less stored honey speeds up nearby plant growth and foraging target respawn."
+            : storedHoneySpeedsPlants
+                ? "Less stored honey speeds up nearby plant growth."
+                : "Less stored honey speeds up nearby foraging target respawn.";
+        AppendLine(
+            ref hoverText,
+            Colorize(GroundworkLocalization.Text(
+                growthExplanationKey,
+                growthExplanationFallback)));
     }
 
     private static void ReplaceHoverHeader(Beehive beehive, ref string hoverText, int honeyLevel, int maxHoney, int farmingCapacityBonus)

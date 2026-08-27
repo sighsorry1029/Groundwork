@@ -22,7 +22,7 @@ namespace Groundwork;
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.1.3";
+    internal const string ModVersion = "1.1.4";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
@@ -369,6 +369,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         internal ConfigEntry<float> ForagingPickupMaxRange = null!;
         internal ConfigEntry<float> ForagingRespawnSpeedFactor = null!;
         internal ConfigEntry<float> PlantGrowSpeedFactor = null!;
+        internal ConfigEntry<Toggle> BeehiveHoverExplanation = null!;
         internal ConfigEntry<int> BeehiveCapacityFarmingLevelsPerBonusHoney = null!;
         internal ConfigEntry<float> BeehiveFarmingSkillGainPerHoney = null!;
         internal ConfigEntry<float> BeehiveCoverMaxSpeedMultiplier = null!;
@@ -401,6 +402,7 @@ public class GroundworkPlugin : BaseUnityPlugin
             WetEnvironmentPlantGrowSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Plant Grow Speed Factor", 2f, new ConfigDescription("Plant growth speed factor while the current environment is wet. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
             WetEnvironmentForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Foraging Respawn Speed Factor", 2f, new ConfigDescription("Foraging respawn speed factor while the current environment is wet. Applies to automatic edible targets and prefabs explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
 
+            BeehiveHoverExplanation = plugin.config(beehivesGroup, "Beehive Hover Explanation", Toggle.On, "If on, beehive hover text explains how openness, nearby growing targets, and stored honey affect honey production and nearby growth.", synchronizedSetting: false);
             BeehiveCapacityFarmingLevelsPerBonusHoney = plugin.config(beehivesGroup, "Beehive Capacity Farming Levels Per Bonus Honey", 20, new ConfigDescription("Farming levels required for each +1 beehive honey capacity. 0 disables the capacity bonus.", new AcceptableValueRange<int>(0, 100)), synchronizedSetting: true);
             BeehiveFarmingSkillGainPerHoney = plugin.config(beehivesGroup, "Beehive Farming Skill Gain Per Honey", 0.25f, new ConfigDescription("Farming skill gain for each honey harvested from a beehive. 0 disables this bonus.", new AcceptableValueRange<float>(0f, 5f)), synchronizedSetting: true);
             BeehiveCoverMaxSpeedMultiplier = plugin.config(beehivesGroup, "Beehive Cover Max Speed Multiplier", 3f, new ConfigDescription("Honey production multiplier at 0% cover. The bonus scales linearly from x1 at the beehive max cover threshold to this value when fully open.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);

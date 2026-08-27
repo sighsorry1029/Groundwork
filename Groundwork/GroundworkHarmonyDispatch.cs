@@ -196,6 +196,211 @@ internal static class HudSetupPieceInfoGroundworkPatch
     }
 }
 
+internal static class FarmingSkillTooltipText
+{
+    internal const string HeadingToken = "$groundwork_skill_farming_heading";
+    internal const string MassPlantingToken = "$groundwork_skill_farming_mass_planting";
+    internal const string PlantGrowthToken = "$groundwork_skill_farming_plant_growth";
+    internal const string ForagingRangeToken = "$groundwork_skill_farming_foraging_range";
+    internal const string ForagingRespawnToken = "$groundwork_skill_farming_foraging_respawn";
+    internal const string ForagingBothToken = "$groundwork_skill_farming_foraging_both";
+    internal const string BonusYieldToken = "$groundwork_skill_farming_bonus_yield";
+    internal const string BeehiveCapacityToken = "$groundwork_skill_farming_beehive_capacity";
+
+    internal static string Append(
+        string? original,
+        bool massPlantingEnabled,
+        bool plantGrowthEnabled,
+        bool foragingRangeEnabled,
+        bool foragingRespawnEnabled,
+        bool beehiveCapacityEnabled)
+    {
+        original ??= string.Empty;
+        if (original.IndexOf(HeadingToken, StringComparison.Ordinal) >= 0)
+        {
+            return original;
+        }
+
+        List<string> lines = [HeadingToken];
+        if (massPlantingEnabled)
+        {
+            lines.Add(MassPlantingToken);
+        }
+
+        if (plantGrowthEnabled)
+        {
+            lines.Add(PlantGrowthToken);
+        }
+
+        if (foragingRangeEnabled && foragingRespawnEnabled)
+        {
+            lines.Add(ForagingBothToken);
+        }
+        else if (foragingRangeEnabled)
+        {
+            lines.Add(ForagingRangeToken);
+        }
+        else if (foragingRespawnEnabled)
+        {
+            lines.Add(ForagingRespawnToken);
+        }
+
+        lines.Add(BonusYieldToken);
+        if (beehiveCapacityEnabled)
+        {
+            lines.Add(BeehiveCapacityToken);
+        }
+
+        string section = string.Join("\n", lines);
+        return original.Length > 0
+            ? original + "\n\n" + section
+            : section;
+    }
+
+    internal static bool MatchesSkillDescription(
+        string? tooltipText,
+        string? skillDescription)
+    {
+        return !string.IsNullOrWhiteSpace(tooltipText) &&
+               !string.IsNullOrWhiteSpace(skillDescription) &&
+               tooltipText!.IndexOf(skillDescription!, StringComparison.Ordinal) >= 0;
+    }
+}
+
+[HarmonyPatch(typeof(SkillsDialog), nameof(SkillsDialog.Setup))]
+internal static class FarmingSkillTooltipPatch
+{
+    private static bool _failureLogged;
+
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    [HarmonyAfter("randyknapp.mods.epicloot")]
+    private static void Postfix(SkillsDialog __instance, Player player)
+    {
+        if (__instance == null || player == null)
+        {
+            return;
+        }
+
+        try
+        {
+            List<Skills.Skill>? skills = player.GetSkills()?.GetSkillList();
+            if (skills == null)
+            {
+                return;
+            }
+
+            Skills.Skill? farmingSkill = null;
+            int farmingIndex = -1;
+            for (int index = 0; index < skills.Count; index++)
+            {
+                Skills.Skill skill = skills[index];
+                if (skill?.m_info?.m_skill == Skills.SkillType.Farming)
+                {
+                    farmingSkill = skill;
+                    farmingIndex = index;
+                    break;
+                }
+            }
+
+            if (farmingSkill?.m_info == null)
+            {
+                return;
+            }
+
+            UITooltip? tooltip = FindFarmingTooltip(
+                __instance,
+                farmingIndex,
+                farmingSkill.m_info.m_description);
+            if (tooltip == null)
+            {
+                return;
+            }
+
+            string text = FarmingSkillTooltipText.Append(
+                tooltip.m_text,
+                GroundworkToolsDomain.MassPlantingEnabled,
+                GroundworkToolsDomain.PlantGrowSpeedFactor > 1.001f,
+                GroundworkToolsDomain.ForagingPickupMaxRange > 0.001f,
+                GroundworkToolsDomain.ForagingRespawnSpeedFactor > 1.001f,
+                GroundworkToolsDomain.BeehiveCapacityFarmingLevelsPerBonusHoney > 0);
+            if (!string.Equals(text, tooltip.m_text, StringComparison.Ordinal))
+            {
+                tooltip.Set(
+                    tooltip.m_topic,
+                    text,
+                    tooltip.m_anchor,
+                    tooltip.m_fixedPosition);
+            }
+        }
+        catch (Exception exception)
+        {
+            if (_failureLogged)
+            {
+                return;
+            }
+
+            _failureLogged = true;
+            GroundworkPlugin.ModLogger.LogWarning(
+                "Could not extend the Farming skill tooltip: " +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static UITooltip? FindFarmingTooltip(
+        SkillsDialog dialog,
+        int farmingIndex,
+        string farmingDescription)
+    {
+        if (dialog.m_elements != null &&
+            farmingIndex >= 0 &&
+            farmingIndex < dialog.m_elements.Count)
+        {
+            UITooltip? indexedTooltip = dialog.m_elements[farmingIndex]?
+                .GetComponentInChildren<UITooltip>();
+            if (indexedTooltip != null &&
+                FarmingSkillTooltipText.MatchesSkillDescription(
+                    indexedTooltip.m_text,
+                    farmingDescription))
+            {
+                return indexedTooltip;
+            }
+        }
+
+        InventoryGui? inventory = dialog.GetComponentInParent<InventoryGui>();
+        if (inventory == null)
+        {
+            return null;
+        }
+
+        UITooltip[] candidates = inventory.GetComponentsInChildren<UITooltip>(true);
+        foreach (UITooltip candidate in candidates)
+        {
+            if (candidate != null &&
+                candidate.gameObject.activeInHierarchy &&
+                FarmingSkillTooltipText.MatchesSkillDescription(
+                    candidate.m_text,
+                    farmingDescription))
+            {
+                return candidate;
+            }
+        }
+
+        foreach (UITooltip candidate in candidates)
+        {
+            if (candidate != null &&
+                FarmingSkillTooltipText.MatchesSkillDescription(
+                    candidate.m_text,
+                    farmingDescription))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+}
+
 [HarmonyPatch(typeof(GameCamera), "UpdateCamera")]
 internal static class GameCameraUpdateCameraGroundworkPatch
 {

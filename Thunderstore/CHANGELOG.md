@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.4
+
+- Added a Groundwork section to the Farming skill tooltip that preserves existing and third-party text while describing enabled mass-planting, crop-growth, foraging, and beehive-capacity effects alongside bonus-yield behavior for eligible Pickables.
+- Added a default-on client setting that shows short, configuration-aware explanations below a beehive's next-honey line for cover, nearby growing targets, and stored-honey growth bonuses.
+
 ## 1.1.3
 
 - Removed the world-space post-harvest dot for respawning foraging Pickables while retaining a 0.32 m invisible hover and pollination proxy at the original position; targets without a respawn timer no longer receive a proxy, and natural or PlantEverything visuals remain untouched.

@@ -40,6 +40,7 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
 - Turn off `Mass Planting Enabled` to disable only multi-plant placement; grid planting stays available.
 - Planted crops can grow faster based on the planter's Farming skill.
 - Mass planting can grant extra Farming skill.
+- Hovering Farming in the Skills tab shows which Groundwork Farming effects are enabled.
 
 ### Foraging
 
@@ -61,6 +62,7 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
 - Empty hives give stronger pollination bonuses; the bonus fades as the hive fills with honey.
 - Growing nearby pollination targets can speed up honey production.
 - Beehive hover text shows honey capacity in the title, plus cover, pollination, night/rain rates, and next honey time with total rate.
+- A client-only setting can show short explanations below the next-honey line for the configured cover and pollination effects.
 - One client setting controls both the centered terrain range guide and marker highlights around Plant/Pickable targets assigned to a hovered beehive. Raising a hive shrinks the guide, while slopes change it by direction. The range turns gray when unavailable or paused; assigned target markers turn gray while rain or night pauses pollination.
 
 ### Terrain Tools
