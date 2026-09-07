@@ -25,6 +25,7 @@ internal static class MassPlantingSystem
     private static readonly List<Vector3> ReservedPlantPositions = [];
     private static readonly List<Vector3> PreviewReservedPlantPositions = [];
     private static readonly List<PlantPreviewGhost> PreviewGhosts = [];
+    private static readonly List<Renderer> GhostRenderers = [];
     private static readonly MethodInfo? UpdatePlacementGhostMethod = AccessTools.Method(typeof(Player), "UpdatePlacementGhost", [typeof(bool)]);
     private static readonly MethodInfo? GetBuildStaminaMethod = AccessTools.Method(typeof(Player), "GetBuildStamina");
     private static readonly MethodInfo? GetPlaceDurabilityMethod = AccessTools.Method(typeof(Player), "GetPlaceDurability", [typeof(ItemDrop.ItemData)]);
@@ -81,14 +82,11 @@ internal static class MassPlantingSystem
         Invalid
     }
 
-    private readonly struct PlantSlot(Vector3 offset, int row, int column, int rows, int columns)
+    private readonly struct PlantSlot(Vector3 offset, int index, float distanceSquared)
     {
         internal readonly Vector3 Offset = offset;
-        internal readonly int Row = row;
-        internal readonly int Column = column;
-        internal readonly int Rows = rows;
-        internal readonly int Columns = columns;
-        internal float Distance => Offset.sqrMagnitude;
+        internal readonly int Index = index;
+        internal readonly float DistanceSquared = distanceSquared;
     }
 
     private readonly struct PlacementCapacity(int count, int stamina, int durability)
@@ -98,9 +96,10 @@ internal static class MassPlantingSystem
         internal readonly int Durability = durability;
     }
 
-    private sealed class PendingPlantPlacement(string plantName, Vector3 position, Quaternion rotation)
+    private sealed class PendingPlantPlacement(string plantName, bool isPickable, Vector3 position, Quaternion rotation)
     {
         internal readonly string PlantName = plantName;
+        internal readonly bool IsPickable = isPickable;
         internal readonly Vector3 Position = position;
         internal readonly Quaternion Rotation = rotation;
         internal bool Consumed;
@@ -233,12 +232,12 @@ internal static class MassPlantingSystem
             return true;
         }
 
-        Plant plant = plantCandidate!;
+        Plant? plant = plantCandidate;
 
         int currentPlantCount = GetCurrentPlantCount(player, piece);
         bool wantsMassPlant = currentPlantCount > 1;
         bool wantsGridSnap = _gridPlantingMode;
-        if (!wantsMassPlant && !wantsGridSnap)
+        if (!wantsMassPlant && !wantsGridSnap && plant != null)
         {
             return true;
         }
@@ -257,7 +256,7 @@ internal static class MassPlantingSystem
 
         Vector3 basePosition = ghost.transform.position;
         Quaternion rotation = ghost.transform.rotation;
-        float spacing = ResolveSpacing(plant);
+        float spacing = ResolveSpacing(piece, plant);
         if (wantsGridSnap)
         {
             basePosition = SnapToGrid(basePosition, spacing);
@@ -273,8 +272,8 @@ internal static class MassPlantingSystem
             return false;
         }
 
-        BuildPlantSlots(wantedCount, spacing, wantsGridSnap);
         GetPlantingGroupAxes(player, ghost, wantsGridSnap, out Vector3 right, out Vector3 forward);
+        BuildPlantSlots(wantedCount, spacing, wantsGridSnap, player.transform.position - basePosition, right, forward);
         PlacementFailure firstFailure = PlacementFailure.None;
         int placed = 0;
 
@@ -297,7 +296,7 @@ internal static class MassPlantingSystem
                     position.y = groundHeight;
                 }
 
-                PlacementFailure failure = HasReservedPlantSpace(plant, position, ReservedPlantPositions)
+                PlacementFailure failure = HasReservedPlantSpace(piece, plant, position, ReservedPlantPositions)
                     ? ValidatePlantPosition(player, piece, plant, position)
                     : PlacementFailure.MoreSpace;
                 if (failure != PlacementFailure.None)
@@ -310,10 +309,14 @@ internal static class MassPlantingSystem
                     continue;
                 }
 
-                Quaternion plantRotation = ResolvePlantRotation(piece, rotation, basePosition, i, randomize: wantsMassPlant);
+                Quaternion plantRotation = ResolvePlantRotation(piece, rotation, basePosition, slot.Index, randomize: wantsMassPlant);
                 ZLog.Log("Placed " + piece.gameObject.name);
                 Game.instance?.IncrementPlayerStat(PlayerStatType.Builds);
-                PendingPlantPlacement pendingPlacement = new(plant.m_name, position, plantRotation);
+                PendingPlantPlacement pendingPlacement = new(
+                    plant != null ? plant.m_name : Utils.GetPrefabName(piece.gameObject),
+                    plant == null,
+                    position,
+                    plantRotation);
                 _pendingPlantPlacement = pendingPlacement;
                 try
                 {
@@ -333,10 +336,10 @@ internal static class MassPlantingSystem
                     {
                         _reportedPlantAwakeHandoffFallback = true;
                         GroundworkPlugin.ModLogger.LogWarning(
-                            "A mass-planted crop did not consume its synchronous Plant.Awake handoff; using the physics lookup fallback.");
+                            "A planted crop did not consume its synchronous placement handoff; using the physics lookup fallback.");
                     }
 
-                    SyncPlacedPlantZdoFallback(plant, position, plantRotation);
+                    SyncPlacedPlantZdoFallback(piece, plant, position, plantRotation);
                 }
 
                 ReservedPlantPositions.Add(position);
@@ -370,12 +373,10 @@ internal static class MassPlantingSystem
             !_gridPlantingMode ||
             PlacementGhostField == null ||
             player.GetPlacementStatus() != Player.PlacementStatus.Valid ||
-            !TryGetSelectedPlant(player, out _, out Plant? plantCandidate))
+            !TryGetSelectedPlant(player, out Piece? pieceCandidate, out Plant? plant))
         {
             return;
         }
-
-        Plant plant = plantCandidate!;
 
         GameObject? ghost = PlacementGhostField.GetValue(player) as GameObject;
         if (ghost == null)
@@ -383,7 +384,7 @@ internal static class MassPlantingSystem
             return;
         }
 
-        ghost.transform.position = SnapToGrid(ghost.transform.position, ResolveSpacing(plant));
+        ghost.transform.position = SnapToGrid(ghost.transform.position, ResolveSpacing(pieceCandidate!, plant));
     }
 
     internal static void UpdatePlacementPreview(Player player)
@@ -397,7 +398,7 @@ internal static class MassPlantingSystem
         }
 
         Piece piece = pieceCandidate!;
-        Plant plant = plantCandidate!;
+        Plant? plant = plantCandidate;
         int currentPlantCount = GetCurrentPlantCount(player, piece);
         GameObject? ghost = PlacementGhostField.GetValue(player) as GameObject;
         if (ghost == null || !ghost.activeInHierarchy)
@@ -414,7 +415,7 @@ internal static class MassPlantingSystem
 
         Vector3 basePosition = ghost.transform.position;
         Quaternion rotation = ghost.transform.rotation;
-        float spacing = ResolveSpacing(plant);
+        float spacing = ResolveSpacing(piece, plant);
         if (_gridPlantingMode)
         {
             basePosition = SnapToGrid(basePosition, spacing);
@@ -422,9 +423,8 @@ internal static class MassPlantingSystem
 
         int wantedCount = currentPlantCount;
         PlacementCapacity capacity = ResolvePlacementCapacity(player, piece, wantedCount, forceResourceRefresh: false);
-        BuildPlantSlots(wantedCount, spacing, _gridPlantingMode);
-
         GetPlantingGroupAxes(player, ghost, _gridPlantingMode, out Vector3 right, out Vector3 forward);
+        BuildPlantSlots(wantedCount, spacing, _gridPlantingMode, player.transform.position - basePosition, right, forward);
 
         EnsurePreviewGhosts(ghost, wantedCount);
         if (PreviewGhosts.Count == 0)
@@ -458,11 +458,11 @@ internal static class MassPlantingSystem
                     position.y = groundHeight;
                 }
 
-                Quaternion plantRotation = ResolvePlantRotation(piece, rotation, basePosition, i, randomize: false);
+                Quaternion plantRotation = ResolvePlantRotation(piece, rotation, basePosition, slot.Index, randomize: false);
                 preview.SetPositionAndRotation(position, plantRotation);
                 bool invalid =
                     i >= capacity.Count ||
-                    !HasReservedPlantSpace(plant, position, PreviewReservedPlantPositions) ||
+                    !HasReservedPlantSpace(piece, plant, position, PreviewReservedPlantPositions) ||
                     ValidatePlantPosition(player, piece, plant, position) != PlacementFailure.None;
                 preview.SetInvalid(invalid);
                 if (!invalid)
@@ -477,7 +477,7 @@ internal static class MassPlantingSystem
         }
     }
 
-    private static void UpdateSinglePlantPreview(Player player, Piece piece, Plant plant, GameObject ghost)
+    private static void UpdateSinglePlantPreview(Player player, Piece piece, Plant? plant, GameObject ghost)
     {
         foreach (PlantPreviewGhost preview in PreviewGhosts)
         {
@@ -637,6 +637,7 @@ internal static class MassPlantingSystem
         PlantSlots.Clear();
         ReservedPlantPositions.Clear();
         PreviewReservedPlantPositions.Clear();
+        GhostRenderers.Clear();
         Array.Clear(SpaceHits, 0, SpaceHits.Length);
 
         _spaceMask = 0;
@@ -683,15 +684,17 @@ internal static class MassPlantingSystem
         ];
         if (IsMassPlantingEnabled())
         {
-            hints.Add($"{FormatMassPlantWheelShortcut()}: {GroundworkLocalization.Text("groundwork_mass_plant", "Mass Plant")}");
-
             if (Player.m_localPlayer is { } player && IsMassPlantingLocked(player, out int farmingLevel))
             {
                 hints.Add(GroundworkLocalization.Format(
                     "groundwork_mass_plant_locked",
-                    "Mass Plant locked (Farming {0}/{1})",
+                    "Mass Plant locked (Farming skill {0}/{1})",
                     farmingLevel,
                     FirstMassPlantingUnlockLevel));
+            }
+            else
+            {
+                hints.Add($"{FormatMassPlantWheelShortcut()} : {GroundworkLocalization.Text("groundwork_mass_plant", "Mass Plant")}");
             }
         }
 
@@ -773,21 +776,27 @@ internal static class MassPlantingSystem
         _showingMassBuildHints = true;
 
         string gridKey = FormatShortcut(GroundworkToolsDomain.ToggleGridPlantingHotkey);
-        string[] massKeys = FormatMassPlantWheelKeys();
+        string[] massKeys = FormatMassPlantModifierKeys();
 
         ArrangeBuildHintSlots(massPlantingEnabled);
-        HideBuildHintSlot(_cycleHintSlot);
+        _cycleHintSlot?.Hide();
         if (massPlantingEnabled)
         {
-            _massHintSlot?.Set($"{massPlantText}<br>{massState}", massKeys, preferredTextWidth: 120f);
+            _massHintSlot?.SetWithMouseWheel($"{massPlantText}<br>{massState}", massKeys, preferredTextWidth: 120f);
         }
         else
         {
-            HideBuildHintSlot(_massHintSlot);
+            _massHintSlot?.Hide();
         }
 
         _gridHintSlot?.Set($"{gridPlantText}<br>{gridState}", new[] { gridKey }, preferredTextWidth: 100f);
-        (_gridHintSlot ?? _massHintSlot)?.RebuildParentLayout();
+        bool layoutChanged = _gridHintSlot?.ConsumeLayoutChange() == true;
+        layoutChanged |= _cycleHintSlot?.ConsumeLayoutChange() == true;
+        layoutChanged |= _massHintSlot?.ConsumeLayoutChange() == true;
+        if (layoutChanged)
+        {
+            (_gridHintSlot ?? _massHintSlot)?.RebuildParentLayout();
+        }
 
         TextMeshProUGUI? gridHint = ResolveGridHint(hints);
         TextMeshProUGUI? copyHint = ResolveCopyHint(hints);
@@ -805,7 +814,7 @@ internal static class MassPlantingSystem
         {
             SetHintText(
                 copyHint,
-                $"{massPlantText} <mspace=0.6em>{FormatMassPlantWheelShortcut()}</mspace> {massState}");
+                $"{massPlantText} {FormatMassPlantWheelShortcut()} {massState}");
         }
 
         if (needsFallback)
@@ -816,7 +825,7 @@ internal static class MassPlantingSystem
                 List<string> fallbackParts = [];
                 if (needsMassFallback)
                 {
-                    fallbackParts.Add($"{GroundworkLocalization.Text("groundwork_mass", "Mass")} <mspace=0.6em>{FormatMassPlantWheelShortcut()}</mspace> {massState}");
+                    fallbackParts.Add($"{GroundworkLocalization.Text("groundwork_mass", "Mass")} {FormatMassPlantWheelShortcut()} {massState}");
                 }
 
                 if (needsGridFallback)
@@ -825,7 +834,10 @@ internal static class MassPlantingSystem
                 }
 
                 _fallbackBuildHint.SetText(string.Join("  ", fallbackParts));
-                _fallbackBuildHint.RebuildParentLayout();
+                if (_fallbackBuildHint.ConsumeLayoutChange())
+                {
+                    _fallbackBuildHint.RebuildParentLayout();
+                }
             }
         }
         else if (_fallbackBuildHint != null)
@@ -864,17 +876,6 @@ internal static class MassPlantingSystem
         }
     }
 
-    private static void HideBuildHintSlot(KeyHintCell? slot)
-    {
-        if (slot == null)
-        {
-            return;
-        }
-
-        slot.Set("", System.Array.Empty<string>(), hideExtraTexts: true);
-        slot.SetActive(false);
-    }
-
     private static void RestoreBuildHintSlots()
     {
         KeyHintCell?[] slots = [_gridHintSlot, _cycleHintSlot, _massHintSlot, _fallbackBuildHint];
@@ -907,7 +908,7 @@ internal static class MassPlantingSystem
     private static bool TryGetPlant(Piece? piece, out Plant? plant)
     {
         plant = piece != null ? piece.GetComponentInChildren<Plant>(includeInactive: true) : null;
-        return plant != null;
+        return plant != null || piece != null && CultivationSystem.TryGetPlanting(piece, out _);
     }
 
     private static int GetCurrentPlantCount(Player player)
@@ -1163,7 +1164,9 @@ internal static class MassPlantingSystem
         }
     }
 
-    private static void BuildPlantSlots(int count, float spacing, bool anchorToCorner)
+    private static void BuildPlantSlots(
+        int count, float spacing, bool anchorToCorner,
+        Vector3 playerOffset, Vector3 right, Vector3 forward)
     {
         PlantSlots.Clear();
         GetGrid(count, out int rows, out int columns);
@@ -1176,7 +1179,11 @@ internal static class MassPlantingSystem
             {
                 float x = (column - columnAnchor) * spacing;
                 float z = (row - rowAnchor) * spacing;
-                PlantSlots.Add(new PlantSlot(new Vector3(x, 0f, z), row, column, rows, columns));
+                // playerOffset is relative to the snapped group origin. Ignore height so slopes
+                // do not change which side fills first; preview and placement share this order.
+                Vector3 delta = right * x + forward * z - playerOffset;
+                float distanceSquared = delta.x * delta.x + delta.z * delta.z;
+                PlantSlots.Add(new PlantSlot(new Vector3(x, 0f, z), row * columns + column, distanceSquared));
             }
         }
 
@@ -1261,24 +1268,20 @@ internal static class MassPlantingSystem
 
     private static int ComparePlantSlotPlacementOrder(PlantSlot a, PlantSlot b)
     {
-        bool horizontal = a.Columns >= a.Rows;
-        int primary = horizontal ? b.Column.CompareTo(a.Column) : b.Row.CompareTo(a.Row);
-        if (primary != 0)
-        {
-            return primary;
-        }
-
-        int secondary = horizontal ? b.Row.CompareTo(a.Row) : b.Column.CompareTo(a.Column);
-        if (secondary != 0)
-        {
-            return secondary;
-        }
-
-        return a.Distance.CompareTo(b.Distance);
+        int distance = a.DistanceSquared.CompareTo(b.DistanceSquared);
+        // The original row-major index breaks ties and also keeps rotation seeds independent
+        // of the player's changing position and the resulting placement order.
+        return distance != 0 ? distance : a.Index.CompareTo(b.Index);
     }
 
-    private static float ResolveSpacing(Plant plant)
+    private static float ResolveSpacing(Piece piece, Plant? plant)
     {
+        if (plant == null)
+        {
+            CultivationSystem.TryGetPlanting(piece, out float spacing);
+            return Mathf.Max(0.25f, spacing * GroundworkToolsDomain.MassPlantSpacingFactor);
+        }
+
         float baseSpacing = Mathf.Max(0.5f, plant.m_growRadius * 2f);
         if (plant.m_growRadiusVines > 0f)
         {
@@ -1663,7 +1666,7 @@ internal static class MassPlantingSystem
         return item.m_shared.m_useDurabilityDrain;
     }
 
-    private static PlacementFailure ValidatePlantPosition(Player player, Piece piece, Plant plant, Vector3 position)
+    private static PlacementFailure ValidatePlantPosition(Player player, Piece piece, Plant? plant, Vector3 position)
     {
         if (Location.IsInsideNoBuildLocation(position))
         {
@@ -1677,12 +1680,13 @@ internal static class MassPlantingSystem
         }
 
         Heightmap? heightmap = Heightmap.FindHeightmap(position);
-        if ((piece.m_groundOnly || piece.m_groundPiece || piece.m_cultivatedGroundOnly || plant.m_needCultivatedGround) && heightmap == null)
+        bool needsCultivatedGround = piece.m_cultivatedGroundOnly || plant != null && plant.m_needCultivatedGround;
+        if ((piece.m_groundOnly || piece.m_groundPiece || needsCultivatedGround) && heightmap == null)
         {
             return PlacementFailure.NoGround;
         }
 
-        if ((piece.m_cultivatedGroundOnly || plant.m_needCultivatedGround) && (heightmap == null || !heightmap.IsCultivated(position)))
+        if (needsCultivatedGround && (heightmap == null || !heightmap.IsCultivated(position)))
         {
             return PlacementFailure.NeedCultivated;
         }
@@ -1692,11 +1696,16 @@ internal static class MassPlantingSystem
             return PlacementFailure.NeedDirt;
         }
 
-        if (!GrowthOverrideSystem.IsPlantBiomeAllowed(
-                plant,
-                piece.m_onlyInBiome,
-                heightmap,
-                position))
+        if (plant == null && piece.m_noInWater &&
+            position.y < Floating.GetLiquidLevel(position, 0f, LiquidType.Water))
+        {
+            return PlacementFailure.Invalid;
+        }
+
+        bool biomeAllowed = plant != null
+            ? GrowthOverrideSystem.IsPlantBiomeAllowed(plant, piece.m_onlyInBiome, heightmap, position)
+            : CultivationSystem.IsPlacementBiomeAllowed(piece, heightmap, position);
+        if (!biomeAllowed)
         {
             return PlacementFailure.WrongBiome;
         }
@@ -1706,7 +1715,7 @@ internal static class MassPlantingSystem
             return PlacementFailure.Invalid;
         }
 
-        return HasPlantSpace(player, plant, position) ? PlacementFailure.None : PlacementFailure.MoreSpace;
+        return HasPlantSpace(player, piece, plant, position) ? PlacementFailure.None : PlacementFailure.MoreSpace;
     }
 
     private static bool IsInvalidVegetationGround(Heightmap? heightmap, Vector3 position)
@@ -1721,21 +1730,39 @@ internal static class MassPlantingSystem
         return biome == Heightmap.Biome.AshLands ? vegetationMask > 0.1f : vegetationMask < 0.25f;
     }
 
-    private static bool HasPlantSpace(Player player, Plant plant, Vector3 position)
+    private static bool HasPlantSpace(Player player, Piece piece, Plant? plant, Vector3 position)
     {
         GameObject? placementGhost = PlacementGhostField?.GetValue(player) as GameObject;
+        float radius = plant != null ? plant.m_growRadius : GetPickableMinimumSpacing(piece);
         int count = Physics.OverlapSphereNonAlloc(
             position,
-            plant.m_growRadius,
+            radius,
             SpaceHits,
-            GetSpaceMask(),
-            QueryTriggerInteraction.UseGlobal);
+            plant != null ? GetSpaceMask() : GetSpaceMask() | LayerMask.GetMask("item"),
+            plant != null ? QueryTriggerInteraction.UseGlobal : QueryTriggerInteraction.Collide);
+
+        // A saturated result cannot establish that every blocker was checked.
+        if (plant == null && count == SpaceHits.Length)
+        {
+            return false;
+        }
 
         for (int i = 0; i < count; i++)
         {
             Collider hit = SpaceHits[i];
             if (hit == null || IsPlacementGhostCollider(placementGhost, hit))
             {
+                continue;
+            }
+
+            if (plant == null && hit.GetComponentInParent<Pickable>() is { } otherPickable)
+            {
+                Vector3 delta = otherPickable.transform.position - position;
+                if (delta.x * delta.x + delta.z * delta.z < radius * radius - 0.0001f)
+                {
+                    return false;
+                }
+
                 continue;
             }
 
@@ -1760,7 +1787,8 @@ internal static class MassPlantingSystem
     }
 
     private static bool HasReservedPlantSpace(
-        Plant plant,
+        Piece piece,
+        Plant? plant,
         Vector3 position,
         List<Vector3> reservedPositions)
     {
@@ -1769,13 +1797,13 @@ internal static class MassPlantingSystem
             return true;
         }
 
-        float radius = Mathf.Max(0.05f, plant.m_growRadius);
-        if (plant.m_growRadiusVines > 0f)
+        float radius = plant != null ? Mathf.Max(0.05f, plant.m_growRadius) : GetPickableMinimumSpacing(piece);
+        if (plant != null && plant.m_growRadiusVines > 0f)
         {
             radius = Mathf.Max(radius, plant.m_growRadiusVines);
         }
 
-        float radiusSqr = radius * radius;
+        float radiusSqr = radius * radius - (plant == null ? 0.0001f : 0f);
         foreach (Vector3 reservedPosition in reservedPositions)
         {
             float x = reservedPosition.x - position.x;
@@ -1789,11 +1817,18 @@ internal static class MassPlantingSystem
         return true;
     }
 
+    private static float GetPickableMinimumSpacing(Piece piece)
+    {
+        CultivationSystem.TryGetPlanting(piece, out float spacing);
+        return Mathf.Max(0.25f, spacing);
+    }
+
     internal static void TrySynchronizePendingPlant(Plant plant)
     {
         PendingPlantPlacement? pendingPlacement = _pendingPlantPlacement;
         if (pendingPlacement == null ||
             pendingPlacement.Consumed ||
+            pendingPlacement.IsPickable ||
             plant == null ||
             !string.Equals(plant.m_name, pendingPlacement.PlantName, StringComparison.Ordinal) ||
             plant.m_nview == null ||
@@ -1809,16 +1844,43 @@ internal static class MassPlantingSystem
             return;
         }
 
-        SynchronizePlacedPlant(plant, zdo, pendingPlacement.Position, pendingPlacement.Rotation);
+        SynchronizePlacedPlant(plant.transform, zdo, pendingPlacement.Position, pendingPlacement.Rotation);
         pendingPlacement.Consumed = true;
     }
 
-    private static void SyncPlacedPlantZdoFallback(Plant prefabPlant, Vector3 position, Quaternion rotation)
+    internal static void TrySynchronizePendingPickable(Pickable pickable)
+    {
+        PendingPlantPlacement? pendingPlacement = _pendingPlantPlacement;
+        if (pendingPlacement == null ||
+            pendingPlacement.Consumed ||
+            !pendingPlacement.IsPickable ||
+            pickable == null ||
+            !string.Equals(Utils.GetPrefabName(pickable.gameObject), pendingPlacement.PlantName, StringComparison.Ordinal) ||
+            pickable.m_nview == null ||
+            !pickable.m_nview.IsValid() ||
+            !pickable.m_nview.IsOwner())
+        {
+            return;
+        }
+
+        ZDO? zdo = pickable.m_nview.GetZDO();
+        if (zdo == null)
+        {
+            return;
+        }
+
+        SynchronizePlacedPlant(pickable.transform, zdo, pendingPlacement.Position, pendingPlacement.Rotation);
+        pendingPlacement.Consumed = true;
+    }
+
+    private static void SyncPlacedPlantZdoFallback(Piece prefabPiece, Plant? prefabPlant, Vector3 position, Quaternion rotation)
     {
         Physics.SyncTransforms();
 
-        float searchRadius = Mathf.Max(0.5f, prefabPlant.m_growRadius);
-        if (prefabPlant.m_growRadiusVines > 0f)
+        float searchRadius = prefabPlant != null
+            ? Mathf.Max(0.5f, prefabPlant.m_growRadius)
+            : Mathf.Max(0.5f, GetPickableMinimumSpacing(prefabPiece));
+        if (prefabPlant != null && prefabPlant.m_growRadiusVines > 0f)
         {
             searchRadius = Mathf.Max(searchRadius, prefabPlant.m_growRadiusVines);
         }
@@ -1827,21 +1889,27 @@ internal static class MassPlantingSystem
             position,
             searchRadius,
             SpaceHits,
-            GetSpaceMask(),
-            QueryTriggerInteraction.UseGlobal);
+            prefabPlant != null ? GetSpaceMask() : GetSpaceMask() | LayerMask.GetMask("item"),
+            prefabPlant != null ? QueryTriggerInteraction.UseGlobal : QueryTriggerInteraction.Collide);
 
-        Plant? placedPlant = null;
+        Transform? placedTransform = null;
+        ZDO? placedZdo = null;
         float bestDistance = float.MaxValue;
         float positionToleranceSqr = FallbackPlantPositionTolerance * FallbackPlantPositionTolerance;
         for (int i = 0; i < count; i++)
         {
             Collider hit = SpaceHits[i];
-            Plant? candidate = hit != null ? hit.GetComponentInParent<Plant>() : null;
+            Component? candidate = hit == null
+                ? null
+                : prefabPlant != null ? hit.GetComponentInParent<Plant>() : hit.GetComponentInParent<Pickable>();
+            ZNetView? candidateView = candidate != null ? candidate.GetComponent<ZNetView>() : null;
             if (candidate == null ||
-                candidate.m_nview == null ||
-                !candidate.m_nview.IsValid() ||
-                !candidate.m_nview.IsOwner() ||
-                !string.Equals(candidate.m_name, prefabPlant.m_name, StringComparison.Ordinal))
+                candidateView == null ||
+                !candidateView.IsValid() ||
+                !candidateView.IsOwner() ||
+                (candidate is Plant candidatePlant
+                    ? !string.Equals(candidatePlant.m_name, prefabPlant!.m_name, StringComparison.Ordinal)
+                    : !string.Equals(Utils.GetPrefabName(candidate.gameObject), Utils.GetPrefabName(prefabPiece.gameObject), StringComparison.Ordinal)))
             {
                 continue;
             }
@@ -1849,31 +1917,26 @@ internal static class MassPlantingSystem
             float distance = (candidate.transform.position - position).sqrMagnitude;
             if (distance <= positionToleranceSqr && distance < bestDistance)
             {
-                placedPlant = candidate;
+                placedTransform = candidate.transform;
+                placedZdo = candidateView.GetZDO();
                 bestDistance = distance;
             }
         }
 
-        if (placedPlant == null)
+        if (placedTransform == null || placedZdo == null)
         {
             return;
         }
 
-        ZDO? zdo = placedPlant.m_nview.GetZDO();
-        if (zdo == null)
-        {
-            return;
-        }
-
-        SynchronizePlacedPlant(placedPlant, zdo, position, rotation);
+        SynchronizePlacedPlant(placedTransform, placedZdo, position, rotation);
     }
 
-    private static void SynchronizePlacedPlant(Plant placedPlant, ZDO zdo, Vector3 position, Quaternion rotation)
+    private static void SynchronizePlacedPlant(Transform placedTransform, ZDO zdo, Vector3 position, Quaternion rotation)
     {
         bool transformChanged =
-            (placedPlant.transform.position - position).sqrMagnitude > 0.0001f ||
-            Quaternion.Angle(placedPlant.transform.rotation, rotation) > 0.01f;
-        placedPlant.transform.SetPositionAndRotation(position, rotation);
+            (placedTransform.position - position).sqrMagnitude > 0.0001f ||
+            Quaternion.Angle(placedTransform.rotation, rotation) > 0.01f;
+        placedTransform.SetPositionAndRotation(position, rotation);
         zdo.SetPosition(position);
         zdo.SetRotation(rotation);
         if (transformChanged)
@@ -2078,23 +2141,22 @@ internal static class MassPlantingSystem
         return string.Join(" + ", parts);
     }
 
-    private static string[] FormatMassPlantWheelKeys()
+    private static string[] FormatMassPlantModifierKeys()
     {
         KeyboardShortcut shortcut = GroundworkToolsDomain.ToolWheelModifierHotkey;
         if (shortcut.MainKey == KeyCode.None)
         {
-            return ["Wheel"];
+            return [];
         }
 
         List<string> parts = shortcut.Modifiers.Select(modifier => modifier.ToString()).ToList();
         parts.Add(shortcut.MainKey.ToString());
-        parts.Add("Wheel");
         return parts.ToArray();
     }
 
     private static string FormatMassPlantWheelShortcut()
     {
-        return string.Join(" + ", FormatMassPlantWheelKeys());
+        return string.Join(" + ", FormatMassPlantModifierKeys().Concat(new[] { GroundworkInputIcons.MouseWheel }));
     }
 
     private static bool IsMassPlantWheelModifierHeld()
@@ -2180,7 +2242,8 @@ internal static class MassPlantingSystem
             _hiddenOriginalGhost = ghost;
         }
 
-        foreach (Renderer renderer in ghost.GetComponentsInChildren<Renderer>(includeInactive: true))
+        ghost.GetComponentsInChildren(true, GhostRenderers);
+        foreach (Renderer renderer in GhostRenderers)
         {
             if (!OriginalGhostRendererStates.ContainsKey(renderer))
             {
@@ -2189,6 +2252,7 @@ internal static class MassPlantingSystem
 
             renderer.enabled = false;
         }
+        GhostRenderers.Clear();
     }
 
     private static void SetOriginalGhostInvalid(GameObject? ghost, bool invalid)
@@ -2214,7 +2278,8 @@ internal static class MassPlantingSystem
         InvalidOriginalGhostPropertyBlock.SetColor(OriginalGhostColorProperty, new Color(1f, 0.15f, 0.1f, 0.55f));
         InvalidOriginalGhostPropertyBlock.SetColor(OriginalGhostEmissionColorProperty, new Color(1f, 0.05f, 0.02f, 0.4f));
 
-        foreach (Renderer renderer in ghost.GetComponentsInChildren<Renderer>(includeInactive: true))
+        ghost.GetComponentsInChildren(true, GhostRenderers);
+        foreach (Renderer renderer in GhostRenderers)
         {
             if (renderer == null)
             {
@@ -2230,6 +2295,7 @@ internal static class MassPlantingSystem
 
             renderer.SetPropertyBlock(InvalidOriginalGhostPropertyBlock);
         }
+        GhostRenderers.Clear();
     }
 
     private static void RestoreOriginalGhostPropertyBlocks()

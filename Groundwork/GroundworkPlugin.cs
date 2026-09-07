@@ -16,13 +16,14 @@ using UnityEngine;
 namespace Groundwork;
 
 [BepInPlugin(ModGUID, ModName, ModVersion)]
+[BepInIncompatibility("advize.PlantEverything")]
 [BepInDependency(JewelcraftingGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(ZenBeehiveGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(ExpandWorldDataGuid, BepInDependency.DependencyFlags.SoftDependency)]
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.1.4";
+    internal const string ModVersion = "1.1.5";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
@@ -96,7 +97,11 @@ public class GroundworkPlugin : BaseUnityPlugin
     public void OnDestroy()
     {
         RunShutdownStep("Harmony patches", _harmony.UnpatchSelf);
+        RunShutdownStep(nameof(PlayerPlacePieceGroundworkPatch), PlayerPlacePieceGroundworkPatch.ClearContext);
+        RunShutdownStep(nameof(FarmingSkillTooltipPosition), FarmingSkillTooltipPosition.Clear);
         RunShutdownStep(nameof(GrowthOverrideSystem), GrowthOverrideSystem.Shutdown);
+        RunShutdownStep(nameof(CultivationSystem), CultivationSystem.Shutdown);
+        RunShutdownStep(nameof(PickedVisualSystem), PickedVisualSystem.Shutdown);
         RunShutdownStep(nameof(MassPlantingSystem), MassPlantingSystem.Shutdown);
         RunShutdownStep(nameof(TerrainToolRangeSystem), TerrainToolRangeSystem.Shutdown);
         RunShutdownStep(nameof(PickaxeTerrainScalingSystem), PickaxeTerrainScalingSystem.Shutdown);
@@ -108,6 +113,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         RunShutdownStep(nameof(ScytheHarvestSystem), ScytheHarvestSystem.Shutdown);
         RunShutdownStep(nameof(ScytheToolCompatSystem), ScytheToolCompatSystem.Shutdown);
         RunShutdownStep(nameof(CameraZoomInputSuppressionSystem), CameraZoomInputSuppressionSystem.Shutdown);
+        RunShutdownStep(nameof(GroundworkInputIcons), GroundworkInputIcons.Shutdown);
         RunShutdownStep(nameof(Localizer), Localizer.Unload);
         RunShutdownStep("synced YAML state", DisposeSyncedYamlValue);
         RunShutdownStep("YAML file watcher", DisposeWatcher);
@@ -143,6 +149,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         TerrainToolRangeSystem.RestoreObjectDb(objectDb);
         bool scytheItemTypesChanged = ScytheToolCompatSystem.ApplyToObjectDb(objectDb);
         TerrainToolRangeSystem.ApplyToObjectDb(objectDb, TerrainTools);
+        CultivationSystem.ApplyToObjectDb(objectDb);
         if (scytheItemTypesChanged)
         {
             ScytheToolCompatSystem.NotifyJewelcraftingEffectRecalcIfPresent();
@@ -280,6 +287,8 @@ public class GroundworkPlugin : BaseUnityPlugin
         _terrainTools = configs ?? Array.Empty<NormalizedTerrainToolConfig>();
         if (ObjectDB.instance != null)
         {
+            // Both YAML domains can target the same Piece. Cultivation must run last,
+            // including after restoring costs captured by an older terrain configuration.
             ApplyToObjectDb(ObjectDB.instance);
         }
     }
@@ -345,6 +354,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         internal ConfigEntry<TerrainToolRangePreviewMode> DefaultPreviewMode = null!;
         internal ConfigEntry<KeyboardShortcut> TerrainToolPreviewToggleHotkey = null!;
         internal ConfigEntry<Toggle> ToolHud = null!;
+        internal ConfigEntry<Toggle> TerrainHeightHint = null!;
         internal ConfigEntry<Toggle> PavedRoadSmoothHeight = null!;
         internal ConfigEntry<KeyboardShortcut> ToolWheelModifierHotkey = null!;
 
@@ -355,6 +365,7 @@ public class GroundworkPlugin : BaseUnityPlugin
             DefaultPreviewMode = plugin.config(group, "Terrain Tool Default Preview Mode", TerrainToolRangePreviewMode.Vanilla, "Default Hoe/Cultivator terrain range preview mode. Vanilla scales the existing placement ghost visuals. Grid hides those visuals and draws the exact radius plus terrain grid candidate markers.", synchronizedSetting: false);
             TerrainToolPreviewToggleHotkey = plugin.config(group, "Terrain Tool Preview Toggle Hotkey", new KeyboardShortcut(KeyCode.G), new ConfigDescription("Local hotkey for toggling Hoe/Cultivator terrain modifying pieces between Vanilla and Grid preview while placing.", new AcceptableShortcuts()), synchronizedSetting: false);
             ToolHud = plugin.config(group, "Tool HUD", Toggle.On, "If on, Hoe/Cultivator terrain range HUD, Pickaxe terrain dig scale key hint, and Pickaxe terrain dig tooltip are shown.", synchronizedSetting: false);
+            TerrainHeightHint = plugin.config(group, "Terrain Height Hint", Toggle.On, "Show the standing-height and Shift+Click guidance above the build panel while using Level Ground or Paved Road. Independent of Tool HUD; Paved Road requires Paved Road Smooth Height.", synchronizedSetting: false);
             PavedRoadSmoothHeight = plugin.config(group, "Paved Road Smooth Height", Toggle.On, "If on, Paved Road applies its vanilla smooth height operation. Turn off to keep only the paved paint effect.", synchronizedSetting: false);
             ToolWheelModifierHotkey = plugin.config(group, "Tool Wheel Modifier Hotkey", new KeyboardShortcut(KeyCode.LeftAlt), new ConfigDescription("Local hotkey held while using mouse wheel for Groundwork tool features, including mass planting count, Hoe/Cultivator terrain range, and pickaxe terrainDig scale.", new AcceptableShortcuts()), synchronizedSetting: false);
         }

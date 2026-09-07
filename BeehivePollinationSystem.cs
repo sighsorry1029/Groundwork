@@ -71,7 +71,6 @@ internal static class BeehivePollinationSystem
     private static bool _pollinationTargetPreviewActive;
     private static bool _pollinationPreviewStructurallyActive;
     private static bool _pollinationPreviewCurrentlyActive;
-    private static Player? _placingPlayer;
     private static int _pollinationMask;
     private static float _nextPollinationCachePruneAt;
     private static bool _reportedPollinationSearchSaturation;
@@ -155,7 +154,6 @@ internal static class BeehivePollinationSystem
         SeenHives.Clear();
         PollinationHits = new Collider[256];
         AssignmentHits = new Collider[128];
-        _placingPlayer = null;
         _pollinationMask = 0;
         _nextPollinationCachePruneAt = 0f;
         _reportedPollinationSearchSaturation = false;
@@ -785,24 +783,9 @@ internal static class BeehivePollinationSystem
         player.RaiseSkill(Skills.SkillType.Farming, harvestedHoney * skillGainPerHoney);
     }
 
-    internal static void BeginPlacePiece(Player player, Piece piece)
-    {
-        _placingPlayer = player != null &&
-                         piece != null &&
-                         GroundworkToolsDomain.BeehiveCapacityFarmingLevelsPerBonusHoney > 0 &&
-                         piece.GetComponentInChildren<Beehive>(includeInactive: true) != null
-            ? player
-            : null;
-    }
-
-    internal static void EndPlacePiece()
-    {
-        _placingPlayer = null;
-    }
-
     internal static void TryStoreBuilderFarmingLevel(Beehive beehive)
     {
-        Player? player = _placingPlayer;
+        Player? player = PlayerPlacePieceGroundworkPatch.BeehiveBuilder;
         ZDO? zdo = GetZdo(beehive);
         if (player == null ||
             zdo == null ||
@@ -2042,13 +2025,30 @@ internal static class BeehiveRpcExtractPollinationPatch
         __state = Mathf.Max(0, zdo?.GetInt(ZDOVars.s_level) ?? 0);
     }
 
-    private static void Postfix(Beehive __instance, long caller, int __state)
+    private static void Postfix(Beehive __instance, long caller, int __state, bool __runOriginal)
     {
-        if (__state > 0)
+        // A replacement extraction path owns its harvest bookkeeping (for example, ZenBeehive).
+        if (!__runOriginal || __state <= 0)
         {
-            BeehivePollinationSystem.StoreTendedFarmingLevel(__instance, caller);
-            BeehivePollinationSystem.RaiseFarmingSkillForHarvest(caller, __state);
+            return;
         }
+
+        ZDO? zdo = __instance.m_nview != null && __instance.m_nview.IsValid()
+            ? __instance.m_nview.GetZDO()
+            : null;
+        if (zdo == null)
+        {
+            return;
+        }
+
+        int harvestedHoney = __state - Mathf.Max(0, zdo.GetInt(ZDOVars.s_level));
+        if (harvestedHoney <= 0)
+        {
+            return;
+        }
+
+        BeehivePollinationSystem.StoreTendedFarmingLevel(__instance, caller);
+        BeehivePollinationSystem.RaiseFarmingSkillForHarvest(caller, harvestedHoney);
     }
 }
 

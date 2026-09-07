@@ -87,6 +87,7 @@ internal static class TerrainToolRangeSystem
     private static readonly List<PreviewVisualVisibilityState> HiddenPreviewVisuals = [];
     private static GameObject? RangeLabelObject;
     private static TextMeshProUGUI? RangeLabelText;
+    private static TextMeshProUGUI? AimHeightLabelText;
 
     // ObjectDB rule setup and restoration.
     internal static void Shutdown()
@@ -252,10 +253,11 @@ internal static class TerrainToolRangeSystem
         RestoreCachedTerrainOpSettings();
         float range = GetCurrentRange(rule);
         ApplyRangeToTerrainOps(terrainOps, range, rule);
+        Vector3? gridPreviewCenter = null;
         if (IsGridRangePreviewEnabled())
         {
             ResetScaledPlacementGhost();
-            ApplyCustomRangePreview(ghost, terrainOps, rule, range);
+            gridPreviewCenter = ApplyCustomRangePreview(ghost, terrainOps, rule, range);
         }
         else
         {
@@ -263,7 +265,7 @@ internal static class TerrainToolRangeSystem
             ApplyRangeToGhostVisual(ghost, rule, range);
         }
 
-        UpdateRangeLabel(ghost, terrainOps, range);
+        UpdateRangeLabel(ghost, terrainOps, range, gridPreviewCenter);
     }
 
     internal static void AppendPieceDescription(Piece? piece)
@@ -283,18 +285,16 @@ internal static class TerrainToolRangeSystem
         string shortcut = FormatRangeModifierShortcut();
         string rangeHint = shortcut.Length == 0
             ? GroundworkLocalization.Text("groundwork_terrain_range_hotkey_unbound", "Terrain range adjustment hotkey is unbound")
-            : GroundworkLocalization.Format("groundwork_terrain_range_adjust_hint", "{0} + Mouse Wheel: adjust terrain range", shortcut);
+            : GroundworkLocalization.Format(
+                "groundwork_terrain_range_adjust_hint",
+                "{0} + {1} : adjust terrain range",
+                shortcut,
+                GroundworkInputIcons.MouseWheel);
         string rangeInfo = rangeHint + "\n" +
                            GroundworkLocalization.Format(
                                "groundwork_terrain_current_range",
                                "Current range: {0}m",
                                FormatRange(range));
-        if (AimHeightHintPiecePrefabNames.Contains(rule.PiecePrefabName) &&
-            ShouldKeepPavedRoadSmoothHeight(rule))
-        {
-            rangeInfo = $"{rangeInfo}\n{GroundworkLocalization.Text("groundwork_terrain_aim_height_hint", AimHeightHint)}";
-        }
-
         rangeInfo = $"{rangeInfo}\n{FormatPreviewToggleHint()}";
         piece.m_description = string.IsNullOrWhiteSpace(piece.m_description)
             ? rangeInfo
@@ -597,6 +597,7 @@ internal static class TerrainToolRangeSystem
         ActiveRangeRule = null;
         ActivePreviewMode = null;
         ClearRangePreview();
+        HideAimHeightLabel();
     }
 
     private static void DestroyRuntimeObjects()
@@ -614,6 +615,11 @@ internal static class TerrainToolRangeSystem
         if (RangeLabelObject != null)
         {
             UnityEngine.Object.Destroy(RangeLabelObject);
+        }
+
+        if (AimHeightLabelText != null)
+        {
+            UnityEngine.Object.Destroy(AimHeightLabelText.gameObject);
         }
 
         if (CustomGridPreviewMesh != null)
@@ -641,6 +647,7 @@ internal static class TerrainToolRangeSystem
         LastGridPreviewState = null;
         RangeLabelObject = null;
         RangeLabelText = null;
+        AimHeightLabelText = null;
         CustomRangePreviewHeightmaps.Clear();
         CustomGridPreviewHeightmaps.Clear();
         CustomGridPreviewVertices.Clear();
@@ -1039,12 +1046,12 @@ internal static class TerrainToolRangeSystem
     }
 
     // Custom terrain range and grid preview rendering.
-    private static void ApplyCustomRangePreview(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, TerrainToolRule rule, float range)
+    private static Vector3? ApplyCustomRangePreview(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, TerrainToolRule rule, float range)
     {
         if (ghost == null)
         {
             ClearCustomRangePreview();
-            return;
+            return null;
         }
 
         if (CustomRangePreviewGhost != ghost)
@@ -1062,7 +1069,7 @@ internal static class TerrainToolRangeSystem
         LineRenderer? lineRenderer = EnsureCustomRangePreviewLine();
         if (lineRenderer == null)
         {
-            return;
+            return null;
         }
 
         Vector3 center = ResolveRangePreviewWorldPoint(ghost, terrainOps);
@@ -1072,12 +1079,13 @@ internal static class TerrainToolRangeSystem
         ringColor.a = Mathf.Clamp(ringColor.a <= 0.001f ? 0.28f : ringColor.a * 0.45f, 0.16f, 0.55f);
         UpdateCustomRangePreview(
             lineRenderer,
-            center,
+            center + Vector3.up * CustomPreviewYOffset,
             previewRange,
             shape,
             ringColor);
         UpdateCustomGridPreview(terrainOps, CustomRangePreviewColor);
         lineRenderer.gameObject.SetActive(true);
+        return center;
     }
 
     private static LineRenderer? EnsureCustomRangePreviewLine()
@@ -1812,7 +1820,7 @@ internal static class TerrainToolRangeSystem
 
     private static Vector3 ResolveRangePreviewWorldPoint(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps)
     {
-        if (TryResolveSnappedRangePreviewWorldPoint(terrainOps, CustomPreviewYOffset, out Vector3 snappedWorldPoint))
+        if (TryResolveSnappedRangePreviewWorldPoint(terrainOps, 0f, out Vector3 snappedWorldPoint))
         {
             return snappedWorldPoint;
         }
@@ -1821,13 +1829,13 @@ internal static class TerrainToolRangeSystem
         {
             if (terrainOp != null)
             {
-                return terrainOp.transform.position + Vector3.up * CustomPreviewYOffset;
+                return terrainOp.transform.position;
             }
         }
 
         return ghost != null
-            ? ghost.transform.position + Vector3.up * CustomPreviewYOffset
-            : Vector3.up * CustomPreviewYOffset;
+            ? ghost.transform.position
+            : Vector3.zero;
     }
 
     private static bool TryResolveSnappedRangePreviewWorldPoint(IReadOnlyList<TerrainOp> terrainOps, float yOffset, out Vector3 worldPoint)
@@ -2222,7 +2230,105 @@ internal static class TerrainToolRangeSystem
     }
 
     // HUD labels and formatting.
-    private static void UpdateRangeLabel(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, float range)
+    internal static void UpdateAimHeightHud(Hud hud)
+    {
+        Player? player = Player.m_localPlayer;
+        if (!GroundworkToolsDomain.TerrainHeightHintEnabled || player == null ||
+            !player.InPlaceMode() || player.IsDead() || !hud.IsVisible() ||
+            hud.m_buildHud == null || !hud.m_buildHud.activeInHierarchy ||
+            !CanHandlePreviewToggleInput() ||
+            !TryGetSelectedRule(player, out TerrainToolRule rule) || !rule.RangeEnabled ||
+            !AimHeightHintPiecePrefabNames.Contains(rule.PiecePrefabName) ||
+            !ShouldKeepPavedRoadSmoothHeight(rule))
+        {
+            HideAimHeightLabel();
+            return;
+        }
+
+        TextMeshProUGUI? label = EnsureAimHeightLabel(hud);
+        if (label == null)
+        {
+            HideAimHeightLabel();
+            return;
+        }
+
+        string text = GroundworkLocalization.Text("groundwork_terrain_aim_height_hint", AimHeightHint);
+        if (label.text != text)
+        {
+            Localization.instance?.RemoveTextFromCache(label);
+            label.text = text;
+        }
+
+        label.gameObject.SetActive(true);
+    }
+
+    private static TextMeshProUGUI? EnsureAimHeightLabel(Hud hud)
+    {
+        TMP_Text source = hud.m_pieceDescription;
+        if (source == null)
+        {
+            return null;
+        }
+
+        // BuildHud spans the screen. Its direct child containing the description is the actual panel.
+        Transform panel = source.transform;
+        while (panel.parent != null && panel.parent != hud.m_buildHud.transform)
+        {
+            panel = panel.parent;
+        }
+
+        if (panel.parent != hud.m_buildHud.transform || panel is not RectTransform)
+        {
+            return null;
+        }
+
+        if (AimHeightLabelText != null && AimHeightLabelText.transform.parent == panel)
+        {
+            return AimHeightLabelText;
+        }
+
+        if (AimHeightLabelText != null)
+        {
+            UnityEngine.Object.Destroy(AimHeightLabelText.gameObject);
+        }
+
+        GameObject labelObject = new("Groundwork_TerrainHeightHint", typeof(RectTransform));
+        labelObject.layer = panel.gameObject.layer;
+        RectTransform rect = (RectTransform)labelObject.transform;
+        rect.SetParent(panel, false);
+        // Anchor to the build panel, not screen pixels, so UI scaling and panel moves stay aligned.
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(0f, 0f);
+        rect.anchoredPosition = new Vector2(0f, 8f);
+        rect.sizeDelta = new Vector2(0f, 44f);
+        labelObject.AddComponent<LayoutElement>().ignoreLayout = true;
+
+        AimHeightLabelText = labelObject.AddComponent<TextMeshProUGUI>();
+        AimHeightLabelText.font = source.font;
+        AimHeightLabelText.fontSharedMaterial = source.fontSharedMaterial;
+        AimHeightLabelText.fontSize = 16f;
+        AimHeightLabelText.alignment = TextAlignmentOptions.BottomLeft;
+        AimHeightLabelText.color = new Color(1f, 0.95f, 0.78f, 0.96f);
+        AimHeightLabelText.richText = false;
+        AimHeightLabelText.textWrappingMode = TextWrappingModes.NoWrap;
+        AimHeightLabelText.overflowMode = TextOverflowModes.Overflow;
+        AimHeightLabelText.raycastTarget = false;
+        Shadow shadow = labelObject.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.85f);
+        shadow.effectDistance = new Vector2(1.25f, -1.25f);
+        return AimHeightLabelText;
+    }
+
+    private static void HideAimHeightLabel()
+    {
+        if (AimHeightLabelText != null)
+        {
+            AimHeightLabelText.gameObject.SetActive(false);
+        }
+    }
+
+    private static void UpdateRangeLabel(GameObject ghost, IReadOnlyList<TerrainOp> terrainOps, float range, Vector3? gridPreviewCenter)
     {
         if (!GroundworkToolsDomain.ToolHudEnabled)
         {
@@ -2238,7 +2344,11 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
-        Vector3 worldPoint = ResolveRangeLabelWorldPoint(ghost, terrainOps);
+        // Share this update's grid traversal with the outline, without caching
+        // terrain heights across frames or changing the click-time snapshot.
+        Vector3 worldPoint = gridPreviewCenter.HasValue
+            ? gridPreviewCenter.Value + Vector3.up * 0.08f
+            : ResolveRangeLabelWorldPoint(ghost, terrainOps);
         Vector3 screenPoint = mainCamera.WorldToScreenPointScaled(worldPoint);
         bool visible = screenPoint.z > 0f &&
                        screenPoint.x >= 0f &&
@@ -2404,6 +2514,11 @@ internal static class TerrainToolRangeSystem
 
     private static void CleanupExpiredPendingCosts()
     {
+        if (PendingPlacementCosts.Count == 0)
+        {
+            return;
+        }
+
         int currentFrame = Time.frameCount;
         foreach (Player player in PendingPlacementCosts.Keys.ToList())
         {
@@ -2652,18 +2767,19 @@ internal static class TerrainToolRangeSystem
 
     private sealed class ActiveGridPlacementState
     {
-        private readonly GridPreviewOperationState[] _operations;
+        private readonly IReadOnlyList<GridPreviewOperationState> _operations;
         private readonly bool[] _usedOperations;
 
         internal ActiveGridPlacementState(GridPreviewState previewState)
         {
-            _operations = previewState.Operations.ToArray();
-            _usedOperations = new bool[_operations.Length];
+            // GridPreviewState owns an immutable copy. Only consumption belongs to this click.
+            _operations = previewState.Operations;
+            _usedOperations = new bool[_operations.Count];
         }
 
         internal bool TryConsume(string path, out Vector3 transformPosition)
         {
-            for (int index = 0; index < _operations.Length; index++)
+            for (int index = 0; index < _operations.Count; index++)
             {
                 if (!_usedOperations[index] &&
                     string.Equals(_operations[index].Path, path, StringComparison.Ordinal))
@@ -2675,7 +2791,7 @@ internal static class TerrainToolRangeSystem
             }
 
             int unusedIndex = -1;
-            for (int index = 0; index < _operations.Length; index++)
+            for (int index = 0; index < _operations.Count; index++)
             {
                 if (_usedOperations[index])
                 {

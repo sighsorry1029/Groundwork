@@ -22,6 +22,7 @@ internal static class GrowthOverrideSystem
     private const string PickablesReferenceFileName = "pickables.reference.yml";
     private const string PlantsOverrideFileName = "plants.yml";
     private const string PlantsReferenceFileName = "plants.reference.yml";
+    private const string CultivationFileName = "cultivation.yml";
     private const string SyncedYamlIdentifier = "groundwork_growth_yaml";
     private const double ReloadDebounceMilliseconds = 350d;
     private const float SceneSettleDelaySeconds = 1f;
@@ -72,6 +73,27 @@ internal static class GrowthOverrideSystem
     private static ZNetScene? _scene;
     private static AuthorityMode _authorityMode;
     private static string? _lastAppliedNormalizedYaml;
+    private static bool _applicationPending;
+
+    private sealed class NormalizedGrowthRules
+    {
+        internal NormalizedGrowthRules(
+            Dictionary<string, PickableGrowthOverride> pickables,
+            Dictionary<string, PlantGrowthOverride> plants,
+            List<CultivationSystem.Entry> cultivation,
+            string yaml)
+        {
+            Pickables = pickables;
+            Plants = plants;
+            Cultivation = cultivation;
+            Yaml = yaml;
+        }
+
+        internal Dictionary<string, PickableGrowthOverride> Pickables { get; }
+        internal Dictionary<string, PlantGrowthOverride> Plants { get; }
+        internal List<CultivationSystem.Entry> Cultivation { get; }
+        internal string Yaml { get; }
+    }
 
     private static string ConfigDirectoryPath => GroundworkPlugin.YamlConfigDirectoryPath;
 
@@ -86,6 +108,8 @@ internal static class GrowthOverrideSystem
 
     private static string PlantsReferenceFilePath =>
         Path.Combine(ConfigDirectoryPath, PlantsReferenceFileName);
+
+    private static string CultivationFilePath => Path.Combine(ConfigDirectoryPath, CultivationFileName);
 
     private enum AuthorityMode
     {
@@ -221,6 +245,7 @@ internal static class GrowthOverrideSystem
         _expandWorldDataBridgeInitialized = false;
         _expandWorldDataBridgeWarningLogged = false;
         _lastAppliedNormalizedYaml = null;
+        _applicationPending = false;
         _scene = null;
         _owner = null;
         _authorityMode = AuthorityMode.Unknown;
@@ -301,7 +326,7 @@ internal static class GrowthOverrideSystem
             return false;
         }
 
-        bool hasBiomeOverride = TryResolveBiomeMask(rule, out Heightmap.Biome biomeMask);
+        bool hasBiomeOverride = TryResolveBiomeMask(rule.Prefab, rule.Biomes, out Heightmap.Biome biomeMask);
         resolved = new ResolvedPlantRule(
             rule.GrowSecondsMin.HasValue && rule.GrowSecondsMax.HasValue,
             rule.GrowSecondsMin ?? plant.m_growTime,
@@ -343,6 +368,15 @@ internal static class GrowthOverrideSystem
 
         Piece? piece = placementGhost.GetComponent<Piece>() ??
                        placementGhost.GetComponentInChildren<Piece>(includeInactive: true);
+        if (piece != null && CultivationSystem.HasPlacementBiomeOverride(piece))
+        {
+            // The final snapped position is checked explicitly in the postfix. Suppress
+            // vanilla's raw-mask test so custom biome nature aliases use the same path.
+            PieceBiomeOverrideState cultivationState = new(piece, piece.m_onlyInBiome, Heightmap.Biome.None);
+            piece.m_onlyInBiome = Heightmap.Biome.None;
+            return cultivationState;
+        }
+
         Plant? plant = placementGhost.GetComponent<Plant>() ??
                        placementGhost.GetComponentInChildren<Plant>(includeInactive: true);
         if (piece == null ||
@@ -367,6 +401,18 @@ internal static class GrowthOverrideSystem
         }
     }
 
+    internal static void CheckCultivationPlacementBiome(Player player)
+    {
+        if (player.GetPlacementStatus() == Player.PlacementStatus.Valid &&
+            PlacementGhostField?.GetValue(player) is GameObject ghost &&
+            ghost.GetComponent<Piece>() is Piece piece &&
+            CultivationSystem.HasPlacementBiomeOverride(piece) &&
+            !CultivationSystem.IsPlacementBiomeAllowed(piece, Heightmap.FindHeightmap(ghost.transform.position), ghost.transform.position))
+        {
+            player.m_placementStatus = Player.PlacementStatus.WrongBiome;
+        }
+    }
+
     internal static bool IsPlantBiomeAllowed(
         Plant? plant,
         Heightmap.Biome liveAllowedBiomes,
@@ -379,6 +425,11 @@ internal static class GrowthOverrideSystem
             allowedBiomes = rule.BiomeMask;
         }
 
+        return IsBiomeAllowed(allowedBiomes, heightmap, position);
+    }
+
+    internal static bool IsBiomeAllowed(Heightmap.Biome allowedBiomes, Heightmap? heightmap, Vector3 position)
+    {
         if (allowedBiomes == Heightmap.Biome.None)
         {
             return true;
@@ -485,14 +536,15 @@ internal static class GrowthOverrideSystem
             ApplyFileTexts(
                 File.ReadAllText(PickablesOverrideFilePath),
                 File.ReadAllText(PlantsOverrideFilePath),
+                File.ReadAllText(CultivationFilePath),
                 publish: true,
-                $"{PickablesOverrideFilePath} and {PlantsOverrideFilePath}");
+                $"{PickablesOverrideFilePath}, {PlantsOverrideFilePath}, and {CultivationFilePath}");
         }
         catch (Exception exception)
         {
             GroundworkPlugin.ModLogger.LogError(
-                $"Could not reload {PickablesOverrideFileName} and {PlantsOverrideFileName}; " +
-                "keeping the last-known-good growth configuration. " +
+                $"Could not reload {PickablesOverrideFileName}, {PlantsOverrideFileName}, and {CultivationFileName}; " +
+                "leaving the current in-memory growth configuration in place. " +
                 exception.GetBaseException().Message);
         }
     }
@@ -521,33 +573,38 @@ internal static class GrowthOverrideSystem
     {
         string fileName = Path.GetFileName(path);
         return fileName.Equals(PickablesOverrideFileName, StringComparison.OrdinalIgnoreCase) ||
-               fileName.Equals(PlantsOverrideFileName, StringComparison.OrdinalIgnoreCase);
+               fileName.Equals(PlantsOverrideFileName, StringComparison.OrdinalIgnoreCase) ||
+               fileName.Equals(CultivationFileName, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ApplyFileTexts(
         string pickablesYaml,
         string plantsYaml,
+        string cultivationYaml,
         bool publish,
         string source)
     {
         if (!TryParseAndNormalizeFiles(
                 pickablesYaml,
                 plantsYaml,
-                out Dictionary<string, PickableGrowthOverride> pickableRules,
-                out Dictionary<string, PlantGrowthOverride> plantRules,
-                out string normalizedYaml,
+                cultivationYaml,
+                out NormalizedGrowthRules? rules,
                 out string error))
         {
             LogParseFailure(source, error);
             return;
         }
 
-        CommitParsedRules(pickableRules, plantRules, normalizedYaml);
+        if (!TryApplyParsedRules(rules!, source))
+        {
+            return;
+        }
+
         if (publish &&
             _syncedYaml != null &&
-            !string.Equals(_syncedYaml.Value ?? "", normalizedYaml, StringComparison.Ordinal))
+            !string.Equals(_syncedYaml.Value ?? "", rules!.Yaml, StringComparison.Ordinal))
         {
-            _syncedYaml.AssignLocalValue(normalizedYaml);
+            _syncedYaml.AssignLocalValue(rules!.Yaml);
         }
     }
 
@@ -555,52 +612,63 @@ internal static class GrowthOverrideSystem
     {
         if (!TryParseAndNormalizeSyncedDocument(
                 yamlText,
-                out Dictionary<string, PickableGrowthOverride> pickableRules,
-                out Dictionary<string, PlantGrowthOverride> plantRules,
-                out string normalizedYaml,
+                out NormalizedGrowthRules? rules,
                 out string error))
         {
             LogParseFailure(source, error);
             return;
         }
 
-        CommitParsedRules(pickableRules, plantRules, normalizedYaml);
+        TryApplyParsedRules(rules!, source);
     }
 
-    private static void CommitParsedRules(
-        Dictionary<string, PickableGrowthOverride> pickableRules,
-        Dictionary<string, PlantGrowthOverride> plantRules,
-        string normalizedYaml)
+    private static bool TryApplyParsedRules(NormalizedGrowthRules rules, string source)
     {
-        if (string.Equals(normalizedYaml, _lastAppliedNormalizedYaml, StringComparison.Ordinal))
+        if (!_applicationPending &&
+            string.Equals(rules.Yaml, _lastAppliedNormalizedYaml, StringComparison.Ordinal))
         {
-            return;
+            return true;
         }
 
-        _pickableRules = pickableRules;
-        _plantRules = plantRules;
-        _lastAppliedNormalizedYaml = normalizedYaml;
-        PickableRespawnHoverSystem.RefreshLoadedHoverProxies();
-        BeehivePollinationSystem.InvalidateTargetCaches();
+        // Live refreshes read these rules and can partially mutate Unity objects before failing.
+        // Keep retries enabled even when the next document reverts to the last successful YAML.
+        _applicationPending = true;
+        _pickableRules = rules.Pickables;
+        _plantRules = rules.Plants;
+        try
+        {
+            // Fixed visual meshes do not depend on YAML; refresh eligibility without rebuilding them.
+            CultivationSystem.ApplyNormalizedRules(rules.Cultivation);
+            PickableRespawnHoverSystem.RefreshLoadedHoverProxies();
+            BeehivePollinationSystem.InvalidateTargetCaches();
+            _lastAppliedNormalizedYaml = rules.Yaml;
+            _applicationPending = false;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            GroundworkPlugin.ModLogger.LogError(
+                $"Parsed {source}, but could not finish applying growth rules. " +
+                "Live state may be partially updated; the next configuration application will retry. " +
+                exception.GetBaseException().Message);
+            return false;
+        }
     }
 
     private static void LogParseFailure(string source, string error)
     {
         GroundworkPlugin.ModLogger.LogError(
-            $"Could not parse {source}; keeping the last-known-good growth configuration. {error}");
+            $"Could not parse {source}; leaving the current in-memory growth configuration unchanged. {error}");
     }
 
     private static bool TryParseAndNormalizeFiles(
         string pickablesYaml,
         string plantsYaml,
-        out Dictionary<string, PickableGrowthOverride> pickableRules,
-        out Dictionary<string, PlantGrowthOverride> plantRules,
-        out string normalizedYaml,
+        string cultivationYaml,
+        out NormalizedGrowthRules? rules,
         out string error)
     {
-        pickableRules = new Dictionary<string, PickableGrowthOverride>(StringComparer.OrdinalIgnoreCase);
-        plantRules = new Dictionary<string, PlantGrowthOverride>(StringComparer.OrdinalIgnoreCase);
-        normalizedYaml = "";
+        rules = null;
         error = "";
 
         try
@@ -611,12 +679,10 @@ internal static class GrowthOverrideSystem
             List<PlantGrowthEntry> plants = DeserializeRootSequence<PlantGrowthEntry>(
                 plantsYaml,
                 PlantsOverrideFileName);
-            NormalizeEntries(
-                pickables,
-                plants,
-                out pickableRules,
-                out plantRules,
-                out normalizedYaml);
+            List<CultivationSystem.Entry> cultivation = DeserializeRootSequence<CultivationSystem.Entry>(
+                cultivationYaml,
+                CultivationFileName);
+            rules = NormalizeEntries(pickables, plants, cultivation);
             return true;
         }
         catch (Exception exception)
@@ -628,14 +694,10 @@ internal static class GrowthOverrideSystem
 
     private static bool TryParseAndNormalizeSyncedDocument(
         string yamlText,
-        out Dictionary<string, PickableGrowthOverride> pickableRules,
-        out Dictionary<string, PlantGrowthOverride> plantRules,
-        out string normalizedYaml,
+        out NormalizedGrowthRules? rules,
         out string error)
     {
-        pickableRules = new Dictionary<string, PickableGrowthOverride>(StringComparer.OrdinalIgnoreCase);
-        plantRules = new Dictionary<string, PlantGrowthOverride>(StringComparer.OrdinalIgnoreCase);
-        normalizedYaml = "";
+        rules = null;
         error = "";
 
         try
@@ -644,18 +706,13 @@ internal static class GrowthOverrideSystem
                 ? new GrowthOverrideDocument()
                 : Deserializer.Deserialize<GrowthOverrideDocument>(yamlText) ??
                   throw new InvalidDataException("The synced growth document cannot be null.");
-            if (parsed.Pickables == null || parsed.Plants == null)
+            if (parsed.Pickables == null || parsed.Plants == null || parsed.Cultivation == null)
             {
                 throw new InvalidDataException(
-                    "The synced growth document must contain non-null pickables and plants sequences.");
+                    "The synced growth document must contain non-null pickables, plants, and cultivation sequences.");
             }
 
-            NormalizeEntries(
-                parsed.Pickables,
-                parsed.Plants,
-                out pickableRules,
-                out plantRules,
-                out normalizedYaml);
+            rules = NormalizeEntries(parsed.Pickables, parsed.Plants, parsed.Cultivation);
             return true;
         }
         catch (Exception exception)
@@ -676,15 +733,14 @@ internal static class GrowthOverrideSystem
                throw new InvalidDataException($"{fileName} must contain a YAML sequence, not null.");
     }
 
-    private static void NormalizeEntries(
+    private static NormalizedGrowthRules NormalizeEntries(
         IEnumerable<PickableGrowthEntry> pickables,
         IEnumerable<PlantGrowthEntry> plants,
-        out Dictionary<string, PickableGrowthOverride> pickableRules,
-        out Dictionary<string, PlantGrowthOverride> plantRules,
-        out string normalizedYaml)
+        IEnumerable<CultivationSystem.Entry> cultivation)
     {
-        pickableRules = new Dictionary<string, PickableGrowthOverride>(StringComparer.OrdinalIgnoreCase);
-        plantRules = new Dictionary<string, PlantGrowthOverride>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, PickableGrowthOverride> pickableRules = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, PlantGrowthOverride> plantRules = new(StringComparer.OrdinalIgnoreCase);
+        List<CultivationSystem.Entry> cultivationRules = CultivationSystem.NormalizeEntries(cultivation);
 
         foreach (PickableGrowthEntry raw in pickables)
         {
@@ -709,9 +765,11 @@ internal static class GrowthOverrideSystem
                 .OrderBy(entry => entry.Prefab, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.Prefab, StringComparer.Ordinal)
                 .Select(ToDocumentEntry)
-                .ToList()
+                .ToList(),
+            Cultivation = cultivationRules
         };
-        normalizedYaml = CanonicalizeYaml(Serializer.Serialize(normalized));
+        return new NormalizedGrowthRules(
+            pickableRules, plantRules, cultivationRules, CanonicalizeYaml(Serializer.Serialize(normalized)));
     }
 
     private static string CanonicalizeYaml(string yaml)
@@ -831,7 +889,7 @@ internal static class GrowthOverrideSystem
         };
     }
 
-    private static PlantBiomeList? NormalizeBiomeList(PlantBiomeList? raw, string prefab)
+    internal static PlantBiomeList? NormalizeBiomeList(PlantBiomeList? raw, string prefab)
     {
         if (raw == null)
         {
@@ -841,7 +899,7 @@ internal static class GrowthOverrideSystem
         if (raw.Names == null || raw.Names.Count == 0)
         {
             throw new InvalidDataException(
-                $"Plant '{prefab}' biomes must contain at least one biome name.");
+                $"Prefab '{prefab}' biomes must contain at least one biome name.");
         }
 
         List<string> names = new(raw.Names.Count);
@@ -852,26 +910,26 @@ internal static class GrowthOverrideSystem
             if (name.Length == 0 || name.Any(char.IsControl))
             {
                 throw new InvalidDataException(
-                    $"Plant '{prefab}' biome names must be non-empty and cannot contain control characters.");
+                    $"Prefab '{prefab}' biome names must be non-empty and cannot contain control characters.");
             }
 
             if (name.Equals(nameof(Heightmap.Biome.None), StringComparison.OrdinalIgnoreCase) ||
                 name.Equals(nameof(Heightmap.Biome.All), StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidDataException(
-                    $"Plant '{prefab}' biome '{name}' is not supported; list explicit biome names instead.");
+                    $"Prefab '{prefab}' biome '{name}' is not supported; list explicit biome names instead.");
             }
 
             if (long.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
             {
                 throw new InvalidDataException(
-                    $"Plant '{prefab}' biome values must use names, not numeric masks.");
+                    $"Prefab '{prefab}' biome values must use names, not numeric masks.");
             }
 
             if (!seen.Add(name))
             {
                 throw new InvalidDataException(
-                    $"Plant '{prefab}' contains duplicate biome name '{name}'.");
+                    $"Prefab '{prefab}' contains duplicate biome name '{name}'.");
             }
 
             names.Add(name);
@@ -933,22 +991,23 @@ internal static class GrowthOverrideSystem
         return parsed;
     }
 
-    private static bool TryResolveBiomeMask(
-        PlantGrowthOverride rule,
+    internal static bool TryResolveBiomeMask(
+        string prefab,
+        PlantBiomeList? biomes,
         out Heightmap.Biome biomeMask)
     {
         biomeMask = Heightmap.Biome.None;
-        if (rule.Biomes?.Names == null)
+        if (biomes?.Names == null)
         {
             return false;
         }
 
-        foreach (string name in rule.Biomes.Names)
+        foreach (string name in biomes.Names)
         {
             if (!TryResolveBiomeName(name, out Heightmap.Biome resolved))
             {
                 WarnUnresolvedBiome(
-                    rule,
+                    prefab, biomes,
                     name,
                     "the name is unknown or Expand World Data has not finished loading its biome map");
                 biomeMask = Heightmap.Biome.None;
@@ -958,7 +1017,7 @@ internal static class GrowthOverrideSystem
             if (!IsSingleBiomeBit(resolved))
             {
                 WarnUnresolvedBiome(
-                    rule,
+                    prefab, biomes,
                     name,
                     "the name does not resolve to one biome");
                 biomeMask = Heightmap.Biome.None;
@@ -972,7 +1031,7 @@ internal static class GrowthOverrideSystem
                     : !IsVanillaBiomeBit(resolved))
             {
                 WarnUnresolvedBiome(
-                    rule,
+                    prefab, biomes,
                     name,
                     "its Expand World Data nature could not be resolved");
                 biomeMask = Heightmap.Biome.None;
@@ -982,7 +1041,7 @@ internal static class GrowthOverrideSystem
             if (effective == Heightmap.Biome.None)
             {
                 WarnUnresolvedBiome(
-                    rule,
+                    prefab, biomes,
                     name,
                     "its effective Expand World Data nature is None");
                 biomeMask = Heightmap.Biome.None;
@@ -1104,24 +1163,25 @@ internal static class GrowthOverrideSystem
         _expandWorldDataBridgeWarningLogged = true;
         GroundworkPlugin.ModLogger.LogWarning(
             "Expand World Data biome compatibility is unavailable; " +
-            "Groundwork will preserve live biome restrictions for unresolved custom names. " +
+            "Custom biome lists will be retried when the bridge becomes available. " +
             exception.GetBaseException().Message);
     }
 
     private static void WarnUnresolvedBiome(
-        PlantGrowthOverride rule,
+        string prefab,
+        PlantBiomeList biomes,
         string name,
         string reason)
     {
-        rule.WarnedUnresolvedBiomes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!rule.WarnedUnresolvedBiomes.Add(name))
+        biomes.WarnedUnresolvedBiomes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!biomes.WarnedUnresolvedBiomes.Add(name))
         {
             return;
         }
 
         GroundworkPlugin.ModLogger.LogWarning(
-            $"Plant '{rule.Prefab}' biome override is not active because '{name}' could not be used: {reason}. " +
-            "The complete biome list will be retried and live placement/growth restrictions remain unchanged meanwhile.");
+            $"Prefab '{prefab}' biome list is unavailable because '{name}' could not be used: {reason}. " +
+            "The complete list will be retried. Plant overrides preserve live restrictions; cultivation with an explicit list waits before allowing placement.");
     }
 
     private static bool IsSingleBiomeBit(Heightmap.Biome biome)
@@ -1446,6 +1506,8 @@ internal static class GrowthOverrideSystem
             yield break;
         }
 
+        CultivationSystem.OnZNetSceneReady(scene);
+        PickableRespawnHoverSystem.RefreshLoadedHoverProxies();
         FarmingSkillSystem.RefreshForagingBonusEffectFallback(scene);
         ScytheHarvestSystem.RefreshCultivatedPickables(scene);
         if (_authorityMode == AuthorityMode.LocalFiles)
@@ -1935,6 +1997,11 @@ internal static class GrowthOverrideSystem
                 PlantsOverrideFilePath,
                 DefaultPlantsOverrideTemplate());
         }
+
+        if (!File.Exists(CultivationFilePath))
+        {
+            File.WriteAllText(CultivationFilePath, CultivationSystem.DefaultTemplate());
+        }
     }
 
     private static string DefaultPickablesOverrideTemplate()
@@ -1942,6 +2009,7 @@ internal static class GrowthOverrideSystem
         return string.Join(Environment.NewLine, new[]
         {
             "# Groundwork Pickable respawn and Farming overrides.",
+            "# Cultivator recipes and post-harvest visuals are configured separately in cultivation.yml.",
             $"# Copy exact prefab names and observed values from {PickablesReferenceFileName}.",
             "# This root document is a YAML sequence. Legacy mapping fields are not supported.",
             "#",
@@ -2028,6 +2096,9 @@ internal sealed class GrowthOverrideDocument
 
     [YamlMember(Order = 2)]
     public List<PlantGrowthEntry> Plants { get; set; } = [];
+
+    [YamlMember(Order = 3)]
+    public List<CultivationSystem.Entry> Cultivation { get; set; } = [];
 }
 
 internal sealed class PickableGrowthEntry
@@ -2078,12 +2149,13 @@ internal sealed class PlantGrowthOverride
 
     public PlantBiomeList? Biomes { get; set; }
 
-    internal HashSet<string>? WarnedUnresolvedBiomes { get; set; }
 }
 
 internal sealed class PlantBiomeList
 {
     public List<string> Names { get; set; } = [];
+
+    internal HashSet<string>? WarnedUnresolvedBiomes { get; set; }
 
     internal bool ReferencePlacementBiomeMaskDiffers { get; set; }
 }

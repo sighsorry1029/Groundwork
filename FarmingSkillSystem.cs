@@ -23,7 +23,6 @@ internal static class FarmingSkillSystem
     private const float DynamicRateEpsilon = 0.001f;
     private const float DynamicProgressCheckpointSeconds = 30f;
     private static readonly HashSet<Pickable> SeenPickables = new();
-    private static Player? _placingPlayer;
     private static bool _rangePicking;
     private static int _suppressRangePickup;
     private static int _pickupMask;
@@ -97,7 +96,6 @@ internal static class FarmingSkillSystem
     internal static void Shutdown()
     {
         SeenPickables.Clear();
-        _placingPlayer = null;
         _rangePicking = false;
         _suppressRangePickup = 0;
         _pickupMask = 0;
@@ -289,6 +287,14 @@ internal static class FarmingSkillSystem
         }
 
         zdo!.Set(ForagingPickerSkillKey, ResolveSenderFarmingSkill(sender));
+    }
+
+    internal static void RememberCultivationPlanter(Pickable pickable, Player player)
+    {
+        if (TryGetPickableZdo(pickable, requireOwner: true, out ZDO? zdo))
+        {
+            zdo!.Set(ForagingPickerSkillKey, player.GetSkillFactor(Skills.SkillType.Farming));
+        }
     }
 
     internal static void EnsureForagingPickerSkill(Pickable pickable, bool picked)
@@ -654,25 +660,9 @@ internal static class FarmingSkillSystem
         zdo.Set(ForagingDynamicCycleTicksKey, 0L);
     }
 
-    internal static void BeginPlacePiece(Player player)
-    {
-        if (!GroundworkToolsDomain.PlantGrowFeatureEnabled)
-        {
-            _placingPlayer = null;
-            return;
-        }
-
-        _placingPlayer = player;
-    }
-
-    internal static void EndPlacePiece()
-    {
-        _placingPlayer = null;
-    }
-
     internal static void TryStorePlanterSkill(Plant plant)
     {
-        Player? player = _placingPlayer;
+        Player? player = PlayerPlacePieceGroundworkPatch.PlantPlanter;
         if (player == null ||
             !GroundworkToolsDomain.PlantGrowFeatureEnabled ||
             !TryGetPlantZdo(plant, requireOwner: true, out ZDO? zdo))
@@ -1320,7 +1310,6 @@ internal static class PickableRpcPickForagingSkillPatch
 [HarmonyPatch(typeof(Pickable), nameof(Pickable.SetPicked))]
 internal static class PickableSetPickedForagingSkillPatch
 {
-    [HarmonyAfter("advize.PlantEverything")]
     private static void Postfix(Pickable __instance, bool picked)
     {
         PickableRespawnHoverSystem.RefreshHoverProxy(__instance);

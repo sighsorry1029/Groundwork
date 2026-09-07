@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.5
+
+- Added server-synced `cultivation.yml` recipes for planting respawning berry bushes, mushrooms, Dandelion, Thistle, SmokePuff, and Fiddlehead with configurable costs, spacing, cultivated-ground requirements, and EWD-aware placement biomes.
+- Extended single, grid, and mass planting to configured Pickables. New plantings start empty, remember the planter's Farming level for their first respawn cycle, and can be uprooted with the Cultivator without returning materials or harvesting their contents.
+- Added fixed harvested remnants for supported respawning Pickables and persistent vanilla fern foliage for Groundwork-planted Fiddlehead. Disabling a recipe preserves existing plantings and these visuals.
+- Declared PlantEverything incompatible: BepInEx now skips loading Groundwork when both mods are installed.
+- Changed mass planting to process slots nearest to the player first, with matching preview and placement order. Material, stamina, and durability limits select the nearest slots; invalid selected slots are skipped without extending the batch to farther slots.
+- Positioned the Farming skill tooltip beside the Skills panel, aligned with its row and kept within screen bounds, while preserving existing tooltip text.
+- Added native mouse-wheel icons to tool hints and descriptions, plus a default-on client setting, `Terrain Height Hint`, for standing-height and Shift+Click guidance above the build panel. This setting is independent of Tool HUD; Paved Road guidance requires Paved Road Smooth Height.
+- Reduced repeated key-hint layout work, placement-preview allocations, and duplicate terrain-preview searches; simplified placement context and growth-rule normalization.
+- Fixed failed growth-rule applications causing later attempts with the same YAML, or a return to the last successfully applied YAML, to be skipped. Runtime application failures are logged separately from validation failures and may leave partially updated live state until a subsequent application succeeds.
+- Prevented skipped or unchanged beehive extractions from granting Farming harvest rewards; partial extractions grant rewards only for the honey removed.
+- Made Release packaging opt-in with `/p:BuildPackages=true`. Normal builds produce the merged DLL without deploying it or rewriting the distribution manifest; local deployment still requires `/p:DeployLocal=true`.
+- Existing `cultivation.yml` files are preserved. For configurations from unreleased builds, flatten the old `planting:` wrapper and remove all `pickedVisual:` fields; neither legacy form is migrated or accepted.
+
 ## 1.1.4
 
 - Added a Groundwork section to the Farming skill tooltip that preserves existing and third-party text while describing enabled mass-planting, crop-growth, foraging, and beehive-capacity effects alongside bonus-yield behavior for eligible Pickables.

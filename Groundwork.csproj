@@ -17,6 +17,8 @@
     <RuntimeIdentifiers>win</RuntimeIdentifiers>
     <!-- Keep normal builds isolated from the live game install. Opt in with -p:DeployLocal=true. -->
     <DeployLocal Condition="'$(DeployLocal)' == ''">false</DeployLocal>
+    <!-- Packaging rewrites the distribution manifest; request it explicitly. -->
+    <BuildPackages Condition="'$(BuildPackages)' == ''">false</BuildPackages>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -467,6 +469,8 @@
     <Compile Include="PickaxeTerrainScalingSystem.cs" />
     <Compile Include="Groundwork\AssemblyInfo.cs" />
     <Compile Include="GrowthOverrideSystem.cs" />
+    <Compile Include="CultivationSystem.cs" />
+    <Compile Include="PickedVisualSystem.cs" />
     <Compile Include="GrowthReferenceOwnership.cs" />
     <Compile Include="FarmingSkillSystem.cs" />
     <Compile Include="BeehivePollinationSystem.cs" />
@@ -548,12 +552,12 @@
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath2)" OverwriteReadOnlyFiles="true" Condition="'$(DeployLocal)' == 'true' And Exists('$(CopyOutputDLLPath2)')" />
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath3)" OverwriteReadOnlyFiles="true" Condition="'$(DeployLocal)' == 'true' And Exists('$(CopyOutputDLLPath3)')" />
   </Target>
-  <Target Name="CopyReadMeToTSFolder" AfterTargets="CopyOutputDLL" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') And Exists('$(ProjectDir)Thunderstore\manifest.json') ">
+  <Target Name="CopyReadMeToTSFolder" AfterTargets="CopyOutputDLL" Condition=" '$(BuildPackages)' == 'true' And ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') And Exists('$(ProjectDir)Thunderstore\manifest.json') ">
     <Error Text="README.md not found in project directory." Condition="!Exists('$(ProjectDir)README.md')" />
     <MakeDir Directories="$(PackageDir)" />
     <Copy SourceFiles="$(ProjectDir)README.md" DestinationFolder="$(PackageDir)" OverwriteReadOnlyFiles="true" />
   </Target>
-  <Target Name="UpdateManifestVersion" AfterTargets="CopyReadMeToTSFolder" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') And Exists('$(ProjectDir)Thunderstore\manifest.json') ">
+  <Target Name="UpdateManifestVersion" AfterTargets="CopyReadMeToTSFolder" Condition=" '$(BuildPackages)' == 'true' And ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') And Exists('$(ProjectDir)Thunderstore\manifest.json') ">
     <Error Text="manifest.json not found in Thunderstore directory." Condition="!Exists('$(ProjectDir)Thunderstore\manifest.json')" />
     <ItemGroup>
       <ManifestFile Include="$(ProjectDir)Thunderstore\manifest.json" />
@@ -562,7 +566,7 @@
     <Message Text="Updating version number in Thunderstore\manifest.json" Condition="Exists(@(ManifestFile))" />
     <Exec Command="powershell.exe -ExecutionPolicy Bypass -File &quot;$(ProjectDir)UpdateManifest.ps1&quot; -manifestFile &quot;@(ManifestFile)&quot; -versionString &quot;$(PackageVersion)&quot;" />
   </Target>
-  <Target Name="MakeThunderstorePackage" AfterTargets="UpdateManifestVersion" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' And Exists('$(ProjectDir)Thunderstore\manifest.json') And Exists('$(ProjectDir)Thunderstore\icon.png') ">
+  <Target Name="MakeThunderstorePackage" AfterTargets="UpdateManifestVersion" Condition=" '$(BuildPackages)' == 'true' And '$(Configuration)|$(Platform)' == 'Release|AnyCPU' And Exists('$(ProjectDir)Thunderstore\manifest.json') And Exists('$(ProjectDir)Thunderstore\icon.png') ">
     <Error Text="manifest.json not found in Thunderstore directory." Condition="!Exists('$(ProjectDir)\Thunderstore\manifest.json')" />
     <Error Text="icon.png not found in Thunderstore directory. Please note that Thunderstore requires this image to be 256x256 in dimension" Condition="!Exists('$(ProjectDir)\Thunderstore\icon.png')" />
     <Error Text="CHANGELOG.md not found in Thunderstore directory." Condition="!Exists('$(ProjectDir)\Thunderstore\CHANGELOG.md')" />
@@ -580,7 +584,7 @@
     <ZipDirectory SourceDirectory="$(PackageDir)" DestinationFile="$(ProjectDir)Thunderstore\$(PackageName).zip" Overwrite="true" />
     <RemoveDir Directories="$(PackageDir)" />
   </Target>
-  <Target Name="MakeNexusPackage" AfterTargets="MakeThunderstorePackage" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' And Exists('$(ProjectDir)Thunderstore\manifest.json') ">
+  <Target Name="MakeNexusPackage" AfterTargets="MakeThunderstorePackage" Condition=" '$(BuildPackages)' == 'true' And '$(Configuration)|$(Platform)' == 'Release|AnyCPU' And Exists('$(ProjectDir)Thunderstore\manifest.json') ">
     <MakeDir Directories="$(ProjectDir)\Nexus" />
     <ItemGroup>
       <NexusPackageFiles Include="$(TargetDir)$(AssemblyName).dll;" />

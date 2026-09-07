@@ -38,9 +38,10 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
   - 100: 25 plants
 - Hold the tool wheel modifier hotkey and use the mouse wheel to change mass-plant count.
 - Turn off `Mass Planting Enabled` to disable only multi-plant placement; grid planting stays available.
+- Mass planting processes slots nearest to the player first (horizontal distance), using the same order for preview and placement. Material, stamina, and durability limits select the nearest slots; invalid selected slots are skipped without extending the batch to farther slots.
 - Planted crops can grow faster based on the planter's Farming skill.
 - Mass planting can grant extra Farming skill.
-- Hovering Farming in the Skills tab shows which Groundwork Farming effects are enabled.
+- Hovering Farming in the Skills tab shows its original description and enabled Groundwork Farming effects to the left of the Skills panel, aligned with the Farming row and kept within the screen bounds.
 
 ### Foraging
 
@@ -148,6 +149,7 @@ Groundwork keeps each growth domain in a separate file under `BepInEx/config/Gro
 - `pickables.yml`: editable Pickable and Farming overrides.
 - `plants.reference.yml`: generated Plant values, grouped by the prefab's original provider.
 - `plants.yml`: editable Plant grow-time and allowed-biome overrides.
+- `cultivation.yml`: editable Cultivator recipes for respawning Pickables. Harvested visuals use fixed built-in defaults.
 
 Each override file is a root YAML sequence, not a `pickables:` or `plants:` mapping. Groundwork creates `pickables.yml` with `Pickable_Dandelion` and `Pickable_Thistle` registered as Farming targets:
 
@@ -186,17 +188,51 @@ Tuple schema:
 
 On a successful configured or native Farming bonus roll, Groundwork temporarily supplies fallback VFX/SFX when the Pickable's `m_bonusEffect` is empty. This includes vanilla Farming pickables such as `RaspberryBush` and configured targets such as Dandelion.
 
-When a respawning foraging target hides all of its natural hover colliders after harvesting, Groundwork keeps an invisible hover proxy at the original Pickable position. Aiming at that position shows the target name, active Farming, pollination, and rain factors, and the estimated respawn time. The same proxy keeps the hidden target discoverable by beehive pollination without adding a world-space marker. Existing post-harvest hover targets and PlantEverything's custom picked visuals are preserved.
+When a respawning foraging target hides all of its natural hover colliders after harvesting, Groundwork keeps an invisible hover proxy at the original Pickable position. Aiming at that position shows the target name, active Farming, pollination, and rain factors, and the estimated respawn time. The same proxy keeps the hidden target discoverable by beehive pollination. Cultivator-planted Pickables also keep this proxy for spacing and removal when Farming is opted out. Built-in harvested remnants reuse this collider; existing natural post-harvest models are preserved.
 
-Omitted Pickable/Plant times, omitted Plant biomes, and `null` Farming positions use live prefab values, including values supplied by mods such as PlantEverything. Explicit times form the base before Farming, pollination, and rain multipliers.
+Omitted Pickable/Plant times, omitted Plant biomes, and `null` Farming positions use live prefab values. Explicit times form the base before Farming, pollination, and rain multipliers.
 
 Expand World Data custom biome names are resolved after EWD's synchronized biome map is available. A custom biome configured with `nature: Mistlands` participates in Plant checks as Mistlands, so it belongs to the same effective group as vanilla Mistlands and other custom biomes with that nature; members of one nature group cannot be selected separately. An independent custom biome can be selected by its EWD `biome` name. Groundwork synchronizes names rather than EWD's order-dependent numeric bits; until every configured name resolves, the complete biome override stays inactive and live restrictions remain in effect.
 
 Biome overrides do not alter independent cultivated-ground, heat/cold tolerance, roof, or spacing checks.
 
-On each reload, Groundwork reads and validates both `pickables.yml` and `plants.yml` before replacing either in-memory rule set. If either file is invalid, Groundwork keeps the last-known-good rules from both files. On multiplayer, the server synchronizes the normalized pair to clients; the generated owner-grouped reference files remain local to the server or single-player source of truth.
+On each reload, Groundwork reads and validates `pickables.yml`, `plants.yml`, and `cultivation.yml` before replacing the in-memory rules. If any file is invalid, the current in-memory rules remain unchanged. Unexpected failures during live application are logged separately and can leave partially updated state; the next configuration application retries even when the YAML is unchanged. On multiplayer, the server synchronizes these rules together after successful local application; the generated owner-grouped reference files remain local to the server or single-player source of truth.
 
 The root-sequence compact tuple schema is the only accepted growth schema. Groundwork does not read, parse, or migrate previous root-level YAML files or the unreleased combined/expanded Growth layouts.
+
+## Pickable cultivation and harvested visuals
+
+`cultivation.yml` uses a root sequence with flat recipe settings. Harvested visuals are built in and are not configured in this file:
+
+```yaml
+- prefab: Pickable_Mushroom
+  plantable: false # disable planting only; keep the recipe settings and harvested visual
+  resources:
+    - Mushroom, 30 # item prefab, positive amount
+    - Resin, 15
+  cultivatedGroundOnly: true # default true when omitted
+  spacing: 1 # default 1; base center-to-center planting distance in meters
+  biomes: [Meadows, BlackForest, Plains] # optional allowed planting locations
+```
+
+- Defaults enable recipes for Raspberry, Blueberry, and Cloudberry bushes; red/yellow mushrooms; Dandelion; Thistle; SmokePuff; and Fiddlehead. Each planting costs 20 or 30 of its harvested item plus Resin, Pukeberries, or RottenMeat, as listed in `cultivation.yml`. These are one-time costs per planted instance, not per harvest. Bush spacing defaults to 2 meters; other recipes use 1 meter, before the mass/grid spacing factor. RottenMeat costs on Cloudberry, SmokePuff, and Fiddlehead require access to that material; other mods may change when it becomes available.
+- The generated file keeps five short header comments, with field defaults and EWD biome guidance beside the first recipe. New defaults are only written when `cultivation.yml` is missing; existing files are not overwritten or migrated.
+- Fixed harvested remnants retain the bottom 30% for `Pickable_Mushroom`, `Pickable_Mushroom_yellow`, `Pickable_Dandelion`, `Pickable_Thistle`, `Pickable_SmokePuff`, and wild `Pickable_Fiddlehead`; `Pickable_RoyalJelly` retains the top 30%, lowered to its original base. These visuals require a positive effective respawn time but no cultivation entry or Farming opt-in. Berry bushes keep their native harvested appearance. Blue mushroom cultivation remains an optional commented recipe; it and unknown/custom prefabs receive no generated cut remnant, leaving existing hover handling unchanged.
+- Omitting `plantable` (or setting it to `null`) enables planting if `resources` contains at least one valid tuple; absent/null/empty resources leave planting disabled. `plantable: true` requires resources. `plantable: false` disables only planting, preserving the resource cost and ground/spacing/biome settings for later re-enabling. Supplied settings are validated even for disabled recipes.
+- Omitting `cultivatedGroundOnly` defaults to `true`; omitting `spacing` defaults to 1 meter. Spacing must be finite, greater than 0 and at most 100; the existing grid/mass spacing factor also affects preview spacing, and placement uses a 0.25-meter floor.
+- Fixed harvested visuals apply to both wild and previously planted instances, except where planted Fiddlehead foliage replaces them. Disabling a recipe, removing its entry, or using `[]` disables planting only, not these visuals. Cut direction/fraction and per-prefab visual on/off are not configurable. Existing YAML files are never replaced by generated defaults.
+- The removed `pickedVisual` field is not accepted, ignored, or migrated. Delete every `pickedVisual:` field from existing YAML files; leaving one present (even `null`) rejects the configuration. Visual-only RoyalJelly entries may also be removed because they are no longer needed.
+- The old nested `planting:` schema is not supported or migrated. For an existing file, remove each `planting:` wrapper and move its `resources`, `cultivatedGroundOnly`, and `spacing` fields to the same level as `prefab`, preserving your values. Invalid files are rejected and leave the last-known-good rules unchanged for the running session.
+- Newly planted Pickables start empty and use their normal respawn cycle as the first growth wait. Their planter's Farming level is recorded for that first cycle; later cycles use the picker. Respawn time and Farming opt-in still belong in `pickables.yml` and are not duplicated here.
+- These are directly planted Pickables, not new saplings. Cultivated-ground and spacing are placement checks; Plant health and growth-biome checks do not apply. Existing vanilla crop and tree saplings are unchanged.
+- `biomes: [Meadows, BlackForest, Plains]` belongs at the same level as `prefab`. It restricts single, grid, and mass placement (each final slot is checked) only when planting is enabled, not regeneration of existing plantings or wild Pickables. Omit it to preserve live placement restrictions; no biome restriction is added if the live prefab has none. A non-empty flow list of explicit names is required; `None`, `All`, numbers, and duplicate names are rejected.
+- Cultivation biome names use the same EWD nature groups as `plants.yml`: `[Mistlands]` allows vanilla Mistlands and custom biomes with `nature: Mistlands`. Prefer the vanilla nature name over a custom alias when selecting that group. An independent custom biome without a nature/terrain alias can use its own name. If any name is unknown or its EWD mapping is not ready, the complete cultivation restriction is retried and new planting is blocked until it resolves; no partially resolved list is applied.
+- Grid and mass planting support configured Pickables. Planted Pickables can be uprooted with the Cultivator without returning materials or harvesting their contents; unplanted wild Pickables are not made removable by this feature. Disabling a recipe does not delete existing plantings.
+- Static cut meshes are cached once per source prefab; instances share meshes and vanilla materials. Recipe or growth YAML changes refresh visibility without rebuilding fixed visual meshes. No lights, particle effects, extra mesh colliders, or asset bundles are copied.
+- Groundwork-planted `Pickable_Fiddlehead` automatically retains the vanilla `FernAshlands` foliage before and after harvesting, replacing its cut remnant. Wild Fiddlehead keeps its fixed bottom-30% remnant. The foliage shares vanilla meshes/materials and LODs without copying colliders, destruction scripts, or a network object; hover, harvesting, growth, and removal still belong to the Pickable. It is restored from the saved planting marker on reload, persists when the recipe is disabled/removed, and disappears with the parent when uprooted. If the source visual is unavailable, the fixed cut remnant remains the fallback. Leaf overlap at close spacing and appearance on slopes should be checked in game.
+- Unsupported or unreadable meshes fall back to hover-only behavior. Actual silhouette, cut surfaces, slopes, and modded materials should be checked in game.
+
+Groundwork declares a BepInEx incompatibility with **PlantEverything** (`advize.PlantEverything`). If both are installed, BepInEx skips loading Groundwork and reports the incompatibility. Use one of the two mods; no PlantEverything installation is required for Groundwork's recipes or visuals.
 
 ## Notes
 
@@ -206,5 +242,15 @@ The root-sequence compact tuple schema is the only accepted growth schema. Groun
 - Dedicated servers may not have precise per-position weather history.
 - Plant and foraging targets store owner-authoritative dynamic bonus progress and the last loaded/unloaded rates in ZDOs so later honey, weather, or pollination changes affect only future time; transient target-assignment caches remain local.
 - ZenBeehive beehive containers are supported: honey removed from the container counts as beehive harvest for Farming skill gain and capacity ownership.
-- `BepInEx/config/Groundwork/Groundwork.yml`, `pickables.yml`, and `plants.yml` are created automatically if missing.
+- `BepInEx/config/Groundwork/Groundwork.yml`, `pickables.yml`, `plants.yml`, and `cultivation.yml` are created automatically if missing.
 - `pickables.reference.yml` and `plants.reference.yml` are checked after each world prefab load and rewritten only when their settled content differs.
+
+## Building
+
+Build with Visual Studio MSBuild and the local Valheim/BepInEx paths in `environment.props`:
+
+```text
+MSBuild.exe Groundwork.sln /t:Rebuild /p:Configuration=Release
+```
+
+Normal Debug and Release builds write the merged DLL to `bin/<Configuration>/`. Add `/p:DeployLocal=true` to copy it to the configured game plugin directory. Add `/p:BuildPackages=true` to a Release build to update `Thunderstore/manifest.json` and create the Thunderstore and Nexus packages. Both options default to `false`.

@@ -64,6 +64,7 @@ internal static class PickableRespawnHoverSystem
             return;
         }
 
+        PickedVisualSystem.Refresh(pickable);
         PickedPickableRespawnHoverProxy? proxy = FindHoverProxy(pickable);
         bool shouldProvideProxy = ShouldProvideHoverProxy(pickable);
         bool hasNaturalHoverCollider = shouldProvideProxy && HasActiveNaturalHoverCollider(pickable);
@@ -219,7 +220,9 @@ internal static class PickableRespawnHoverSystem
                pickable.transform.root.gameObject.activeInHierarchy &&
                pickable.GetEnabled == 1 &&
                pickable.GetPicked() &&
-               FarmingSkillSystem.IsForagingTarget(pickable) &&
+               (FarmingSkillSystem.IsForagingTarget(pickable) ||
+                CultivationSystem.IsPlantedPickable(pickable) ||
+                PickedVisualSystem.TryGetPreset(Utils.GetPrefabName(pickable.gameObject), out _)) &&
                FarmingSkillSystem.TryGetPickableRespawnTiming(pickable, out _);
     }
 
@@ -405,7 +408,6 @@ internal sealed class PickedPickableRespawnHoverProxy : MonoBehaviour, Hoverable
 }
 
 [HarmonyPatch(typeof(Pickable), nameof(Pickable.GetHoverText))]
-[HarmonyAfter("advize.PlantEverything")]
 internal static class PickableGetHoverTextRespawnHoverPatch
 {
     private static void Postfix(Pickable __instance, ref string __result)
@@ -421,7 +423,6 @@ internal static class PickableGetHoverTextRespawnHoverPatch
 }
 
 [HarmonyPatch(typeof(Pickable), nameof(Pickable.Awake))]
-[HarmonyAfter("advize.PlantEverything")]
 internal static class PickableAwakeRespawnHoverProxyPatch
 {
     [HarmonyPriority(Priority.Last)]

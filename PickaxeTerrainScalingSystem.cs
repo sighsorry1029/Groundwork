@@ -262,7 +262,7 @@ internal static class PickaxeTerrainScalingSystem
         string shortcut = FormatShortcut(GroundworkToolsDomain.ToolWheelModifierHotkey);
         string keyText = shortcut.Length == 0
             ? GroundworkLocalization.Text("groundwork_state_unbound", "Unbound")
-            : $"{shortcut}+Wheel";
+            : $"{shortcut}+{GroundworkInputIcons.MouseWheel}";
         string label = GroundworkLocalization.Format(
             "groundwork_pickaxe_dig_scale",
             "Dig Scale {0}x",
@@ -274,8 +274,18 @@ internal static class PickaxeTerrainScalingSystem
             return;
         }
 
-        _digHint.Set(label, new[] { keyText }, hideExtraTexts: true);
-        _digHint.RebuildParentLayout();
+        if (shortcut.Length == 0)
+        {
+            _digHint.Set(label, new[] { keyText }, hideExtraTexts: true);
+        }
+        else
+        {
+            _digHint.SetWithMouseWheel(label, new[] { shortcut }, hideExtraTexts: true);
+        }
+        if (_digHint.ConsumeLayoutChange())
+        {
+            _digHint.RebuildParentLayout();
+        }
         _showingDigHint = true;
         _lastDigHintLabel = label;
         _lastDigHintKeyText = keyText;
@@ -298,9 +308,10 @@ internal static class PickaxeTerrainScalingSystem
                 maxScale)
             : GroundworkLocalization.Format(
                 "groundwork_pickaxe_dig_scale_tooltip",
-                "<color=orange>{0} + Wheel</color>: Dig Scale x1~x{1}",
+                "<color=orange>{0} + {2}</color> : Dig Scale x1~x{1}",
                 shortcut,
-                maxScale);
+                maxScale,
+                GroundworkInputIcons.MouseWheel);
         string keyHintNote = GroundworkLocalization.Text(
             "groundwork_pickaxe_dig_scale_tooltip_note",
             "Current scale is shown in the key hint below while equipped.");

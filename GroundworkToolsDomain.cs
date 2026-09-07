@@ -39,6 +39,9 @@ internal static class GroundworkToolsDomain
     internal static bool ToolHudEnabled =>
         TerrainTools.ToolHud?.Value == GroundworkPlugin.Toggle.On;
 
+    internal static bool TerrainHeightHintEnabled =>
+        TerrainTools.TerrainHeightHint?.Value == GroundworkPlugin.Toggle.On;
+
     internal static float ForagingPickupMaxRange =>
         Mathf.Max(0f, Farming.ForagingPickupMaxRange?.Value ?? 0f);
 
