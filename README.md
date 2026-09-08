@@ -247,10 +247,12 @@ Groundwork declares a BepInEx incompatibility with **PlantEverything** (`advize.
 
 ## Building
 
-Build with Visual Studio MSBuild and the local Valheim/BepInEx paths in `environment.props`:
+Configure the local Valheim/BepInEx paths in `environment.props`. For development and testing:
 
 ```text
-MSBuild.exe Groundwork.sln /t:Rebuild /p:Configuration=Release
+dotnet build Groundwork.sln -c Debug -p:DeployToGame=true
 ```
 
-Normal Debug and Release builds write the merged DLL to `bin/<Configuration>/`. Add `/p:DeployLocal=true` to copy it to the configured game plugin directory. Add `/p:BuildPackages=true` to a Release build to update `Thunderstore/manifest.json` and create the Thunderstore and Nexus packages. Both options default to `false`.
+This builds the final merged DLL in `bin/Debug/` and copies it to the configured game plugin directory after successful compilation and merging. Use `-p:DeployToGame=false` to skip copying. The legacy `DeployLocal` option remains a fallback when `DeployToGame` is omitted. Debug builds never package releases or update the distribution manifest.
+
+For an explicitly requested release, run `dotnet build Groundwork.sln -c Release`. Ordinary Release builds update `Thunderstore/manifest.json` from the assembly version and generate the Thunderstore and Nexus ZIPs. Registered Mod Release Manager watch folders can automatically publish newly generated ZIPs to the project's selected sites. For packaging without publishing, disable that project's automatic upload before building or use an unwatched output location. Use `-p:BuildPackages=false` for a DLL-only Release build. Game DLL deployment remains opt-in.

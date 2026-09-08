@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.6
+
+- Standardized local Debug deployment on `DeployToGame=true`, copying only the final merged plugin DLL after successful compilation and merging. An unconfigured deployment destination now fails explicitly.
+- Restored automatic manifest version updates and Thunderstore/Nexus ZIP packaging for ordinary Release builds, matching Mod Release Manager's ZIP-watching workflow. Debug builds do not create release packages or update the manifest.
+- Updated build instructions to distinguish local game testing from Release packaging and automatic site publishing. No gameplay changes in this release.
+
 ## 1.1.5
 
 - Added server-synced `cultivation.yml` recipes for planting respawning berry bushes, mushrooms, Dandelion, Thistle, SmokePuff, and Fiddlehead with configurable costs, spacing, cultivated-ground requirements, and EWD-aware placement biomes.
