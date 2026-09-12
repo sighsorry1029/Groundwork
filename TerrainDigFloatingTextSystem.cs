@@ -110,6 +110,9 @@ internal static class TerrainDigFloatingTextSystem
         }
 
         GameObject labelObject = new("Groundwork_TerrainDigFloatingText");
+        // Valheim no longer ships TMP's default LiberationSans asset. Keep the
+        // component disabled until the HUD font and material have been assigned.
+        labelObject.SetActive(false);
         labelObject.transform.SetParent(Hud.instance.m_rootObject.transform, false);
 
         RectTransform rectTransform = labelObject.AddComponent<RectTransform>();

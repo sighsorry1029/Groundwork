@@ -452,6 +452,7 @@ internal sealed class KeyHintCell
         {
             TMP_Text source = _label ?? _keys[0];
             GameObject separator = new(WheelSeparatorName, typeof(RectTransform));
+            separator.SetActive(false);
             separator.layer = Root.layer;
             separator.transform.SetParent(_wheelImage.transform.parent, false);
             _wheelSeparator = separator.AddComponent<TextMeshProUGUI>();

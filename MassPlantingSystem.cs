@@ -1564,6 +1564,7 @@ internal static class MassPlantingSystem
         }
 
         _limitLabelObject = new GameObject("Groundwork_MassPlantLimitLabel");
+        _limitLabelObject.SetActive(false);
         _limitLabelObject.transform.SetParent(Hud.instance.m_rootObject.transform, false);
 
         RectTransform rectTransform = _limitLabelObject.AddComponent<RectTransform>();
