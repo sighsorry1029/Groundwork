@@ -102,7 +102,7 @@ internal static class ScytheToolCompatSystem
     private static bool TryGetReadyLocalPlayer(out Player player)
     {
         player = Player.m_localPlayer;
-        ZNetView? nview = player != null ? ((Character)player).m_nview : null;
+        ZNetView? nview = player != null ? GameAccess.CharacterView(player) : null;
         return player != null && nview != null && nview.IsValid();
     }
 

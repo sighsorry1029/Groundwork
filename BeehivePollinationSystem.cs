@@ -764,7 +764,7 @@ internal static class BeehivePollinationSystem
     private static void StoreTendedFarmingLevel(Beehive beehive, float farmingLevel)
     {
         ZDO? zdo = GetZdo(beehive);
-        if (zdo == null || !beehive.m_nview.IsOwner())
+        if (zdo == null || !GameAccess.BeehiveView(beehive).IsOwner())
         {
             return;
         }
@@ -789,7 +789,7 @@ internal static class BeehivePollinationSystem
         ZDO? zdo = GetZdo(beehive);
         if (player == null ||
             zdo == null ||
-            !beehive.m_nview.IsOwner() ||
+            !GameAccess.BeehiveView(beehive).IsOwner() ||
             GroundworkToolsDomain.BeehiveCapacityFarmingLevelsPerBonusHoney <= 0 ||
             zdo.GetFloat(TendedFarmingLevelKey, -1f) >= 0f)
         {
@@ -851,7 +851,7 @@ internal static class BeehivePollinationSystem
 
         float currentThreshold = baseSecondsPerHoney / multiplier;
         ZDO? zdo = GetZdo(beehive);
-        if (zdo == null || !beehive.m_nview.IsOwner() || !canProcessProduction)
+        if (zdo == null || !GameAccess.BeehiveView(beehive).IsOwner() || !canProcessProduction)
         {
             return currentThreshold;
         }
@@ -1806,7 +1806,7 @@ internal static class BeehivePollinationSystem
     {
         foreach (Player player in Player.GetAllPlayers())
         {
-            ZNetView? nview = ((Character)player).m_nview;
+            ZNetView? nview = GameAccess.CharacterView(player);
             ZDO? zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
             if (zdo != null && zdo.m_uid.UserID == sender)
             {
@@ -1824,17 +1824,17 @@ internal static class BeehivePollinationSystem
 
     private static ZDO? GetZdo(Beehive beehive)
     {
-        if (beehive == null || beehive.m_nview == null || !beehive.m_nview.IsValid())
+        if (beehive == null || GameAccess.BeehiveView(beehive) == null || !GameAccess.BeehiveView(beehive).IsValid())
         {
             return null;
         }
 
-        return beehive.m_nview.GetZDO();
+        return GameAccess.BeehiveView(beehive).GetZDO();
     }
 
     private static bool IsValid(Beehive beehive)
     {
-        return beehive.m_nview != null && beehive.m_nview.IsValid();
+        return GameAccess.BeehiveView(beehive) != null && GameAccess.BeehiveView(beehive).IsValid();
     }
 
     private static int GetPollinationMask()
@@ -1943,7 +1943,7 @@ internal static class BeehiveGetHoverTextPollinationPatch
     }
 }
 
-[HarmonyPatch(typeof(Beehive), nameof(Beehive.Awake))]
+[HarmonyPatch(typeof(Beehive), "Awake")]
 internal static class BeehiveAwakePollinationPatch
 {
     private static void Postfix(Beehive __instance)
@@ -2019,8 +2019,8 @@ internal static class BeehiveRpcExtractPollinationPatch
 {
     private static void Prefix(Beehive __instance, ref int __state)
     {
-        ZDO? zdo = __instance.m_nview != null && __instance.m_nview.IsValid()
-            ? __instance.m_nview.GetZDO()
+        ZDO? zdo = GameAccess.BeehiveView(__instance) != null && GameAccess.BeehiveView(__instance).IsValid()
+            ? GameAccess.BeehiveView(__instance).GetZDO()
             : null;
         __state = Mathf.Max(0, zdo?.GetInt(ZDOVars.s_level) ?? 0);
     }
@@ -2033,8 +2033,8 @@ internal static class BeehiveRpcExtractPollinationPatch
             return;
         }
 
-        ZDO? zdo = __instance.m_nview != null && __instance.m_nview.IsValid()
-            ? __instance.m_nview.GetZDO()
+        ZDO? zdo = GameAccess.BeehiveView(__instance) != null && GameAccess.BeehiveView(__instance).IsValid()
+            ? GameAccess.BeehiveView(__instance).GetZDO()
             : null;
         if (zdo == null)
         {
@@ -2052,7 +2052,7 @@ internal static class BeehiveRpcExtractPollinationPatch
     }
 }
 
-[HarmonyPatch(typeof(Pickable), nameof(Pickable.Awake))]
+[HarmonyPatch(typeof(Pickable), "Awake")]
 internal static class PickableAwakePollinationPatch
 {
     private static void Postfix(Pickable __instance)

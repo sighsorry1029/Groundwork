@@ -409,7 +409,7 @@ internal static class GrowthOverrideSystem
             CultivationSystem.HasPlacementBiomeOverride(piece) &&
             !CultivationSystem.IsPlacementBiomeAllowed(piece, Heightmap.FindHeightmap(ghost.transform.position), ghost.transform.position))
         {
-            player.m_placementStatus = Player.PlacementStatus.WrongBiome;
+            GameAccess.PlacementStatus(player) = Player.PlacementStatus.WrongBiome;
         }
     }
 
@@ -1830,7 +1830,7 @@ internal static class GrowthOverrideSystem
     private static IEnumerable<GameObject> EnumerateScenePrefabs(ZNetScene scene)
     {
         HashSet<string> seenNames = new(StringComparer.OrdinalIgnoreCase);
-        foreach (GameObject prefab in scene.m_namedPrefabs.Values)
+        foreach (GameObject prefab in GameAccess.NamedPrefabs(scene).Values)
         {
             if (TryAddPrefabName(prefab, seenNames))
             {

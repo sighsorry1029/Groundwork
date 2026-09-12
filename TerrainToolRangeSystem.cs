@@ -175,13 +175,13 @@ internal static class TerrainToolRangeSystem
         string toolPrefabName = ResolveCurrentToolPrefabName(player);
         if (string.IsNullOrWhiteSpace(toolPrefabName) ||
             !RuleConfigsByTool.ContainsKey(toolPrefabName) ||
-            player.m_buildPieces == null)
+            player.GetBuildTool() == null)
         {
             return;
         }
 
         ObjectDbState state = ObjectDbStates.GetValue(ObjectDB.instance, _ => new ObjectDbState());
-        ApplyToPieceTable(ObjectDB.instance, state, toolPrefabName, player.m_buildPieces);
+        ApplyToPieceTable(ObjectDB.instance, state, toolPrefabName, player.GetBuildTool());
     }
 
     // Player input, range selection, and placement lifecycle.
@@ -239,7 +239,7 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
-        if (player.m_placementGhost == null || !TryGetSelectedRule(player, out TerrainToolRule rule) || !rule.RangeEnabled)
+        if (GameAccess.PlacementGhost(player) == null || !TryGetSelectedRule(player, out TerrainToolRule rule) || !rule.RangeEnabled)
         {
             ClearActiveRangeRule();
             ClearRangePreview();
@@ -248,7 +248,7 @@ internal static class TerrainToolRangeSystem
 
         SetActiveRangeRule(rule);
 
-        GameObject ghost = player.m_placementGhost;
+        GameObject ghost = GameAccess.PlacementGhost(player);
         TerrainOp[] terrainOps = GetCachedTerrainOps(ghost);
         RestoreCachedTerrainOpSettings();
         float range = GetCurrentRange(rule);
@@ -328,7 +328,7 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
-        ActivePlacements[player] = new ActivePlacementContext(rule, player.GetRightItem());
+        ActivePlacements[player] = new ActivePlacementContext(rule, GameAccess.RightItem(player));
         if (TryCreateActiveGridPlacementState(rule, out ActiveGridPlacementState? gridPlacementState))
         {
             ActiveGridPlacementStates[player] = gridPlacementState;
@@ -400,7 +400,7 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
-        float requiredStamina = player.GetBuildStamina() * rule.GetStaminaCostMultiplier(GetCurrentRange(rule));
+        float requiredStamina = GameAccess.BuildStamina(player) * rule.GetStaminaCostMultiplier(GetCurrentRange(rule));
         if (player.GetStamina() + 0.001f < requiredStamina)
         {
             result = false;
@@ -420,7 +420,7 @@ internal static class TerrainToolRangeSystem
             return;
         }
 
-        ItemDrop.ItemData? rightItem = player.GetRightItem();
+        ItemDrop.ItemData? rightItem = GameAccess.RightItem(player);
         if (rightItem?.m_shared?.m_useDurability != true)
         {
             return;
@@ -693,13 +693,13 @@ internal static class TerrainToolRangeSystem
     private static bool TryGetSelectedRule(Player player, out TerrainToolRule rule)
     {
         rule = null!;
-        Piece? piece = player.m_buildPieces != null ? player.m_buildPieces.GetSelectedPiece() : null;
+        Piece? piece = player.GetBuildTool() != null ? player.GetBuildTool().GetSelectedPiece() : null;
         return piece != null && RulesByPiece.TryGetValue(piece, out rule);
     }
 
     private static string ResolveCurrentToolPrefabName(Player player)
     {
-        ItemDrop.ItemData? rightItem = player.GetRightItem();
+        ItemDrop.ItemData? rightItem = GameAccess.RightItem(player);
         return rightItem?.m_dropPrefab != null ? rightItem.m_dropPrefab.name : "";
     }
 
@@ -1357,7 +1357,7 @@ internal static class TerrainToolRangeSystem
         }
 
         int vertexWidth = heightmap.m_width + 1;
-        return heightmap.m_heights.Count == vertexWidth * vertexWidth;
+        return GameAccess.Heights(heightmap).Count == vertexWidth * vertexWidth;
     }
 
     private static void BuildFlatCustomRangePreview(Vector3 center, float radius, CustomRangePreviewShape shape)
@@ -1767,7 +1767,7 @@ internal static class TerrainToolRangeSystem
 
     private static void AddCustomGridPreviewMarker(Heightmap heightmap, int x, int y, Color color)
     {
-        Vector3 center = heightmap.transform.TransformPoint(heightmap.CalcVertex(x, y)) +
+        Vector3 center = heightmap.transform.TransformPoint(GameAccess.CalcVertex(heightmap, x, y)) +
                          Vector3.up * CustomPreviewYOffset;
         int vertexStart = CustomGridPreviewVertices.Count;
         float halfSize = CustomGridPreviewMarkerSize * 0.5f;
@@ -2041,7 +2041,7 @@ internal static class TerrainToolRangeSystem
                     continue;
                 }
 
-                Vector3 worldPoint = heightmap.transform.TransformPoint(heightmap.CalcVertex(x, y)) + Vector3.up * yOffset;
+                Vector3 worldPoint = heightmap.transform.TransformPoint(GameAccess.CalcVertex(heightmap, x, y)) + Vector3.up * yOffset;
                 min = Vector3.Min(min, worldPoint);
                 max = Vector3.Max(max, worldPoint);
                 found = true;
@@ -2293,6 +2293,9 @@ internal static class TerrainToolRangeSystem
         }
 
         GameObject labelObject = new("Groundwork_TerrainHeightHint", typeof(RectTransform));
+        // Assign the source font before first activation so TMP does not try its removed
+        // LiberationSans fallback while AddComponent initializes the label.
+        labelObject.SetActive(false);
         labelObject.layer = panel.gameObject.layer;
         RectTransform rect = (RectTransform)labelObject.transform;
         rect.SetParent(panel, false);
@@ -2399,6 +2402,9 @@ internal static class TerrainToolRangeSystem
         }
 
         RangeLabelObject = new GameObject("Groundwork_TerrainToolRangeLabel");
+        // Keep the object inactive until its font is assigned; Valheim no longer ships
+        // TMP's LiberationSans fallback and logs a warning if OnEnable runs first.
+        RangeLabelObject.SetActive(false);
         RangeLabelObject.transform.SetParent(Hud.instance.m_rootObject.transform, false);
 
         RectTransform rectTransform = RangeLabelObject.AddComponent<RectTransform>();
@@ -2925,7 +2931,7 @@ internal static class TerrainToolRangeSystem
 }
 
 // Harmony patches.
-[HarmonyPatch(typeof(Player), nameof(Player.SetPlaceMode))]
+[HarmonyPatch(typeof(Player), "SetPlaceMode")]
 internal static class PlayerSetPlaceModeTerrainToolRangePatch
 {
     private static void Postfix(Player __instance)
@@ -2966,7 +2972,7 @@ internal static class CharacterHaveStaminaTerrainToolRangePatch
     }
 }
 
-[HarmonyPatch(typeof(Player), nameof(Player.GetBuildStamina))]
+[HarmonyPatch(typeof(Player), "GetBuildStamina")]
 internal static class PlayerGetBuildStaminaTerrainToolRangePatch
 {
     private static void Postfix(Player __instance, ref float __result)

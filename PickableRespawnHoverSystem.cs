@@ -294,7 +294,7 @@ internal static class PickableRespawnHoverSystem
     private static bool IsPlayerHoverLayer(int layer)
     {
         Player? localPlayer = Player.m_localPlayer;
-        int interactMask = localPlayer?.m_interactMask ?? 0;
+        int interactMask = localPlayer != null ? GameAccess.InteractMask(localPlayer) : 0;
         if (interactMask == 0)
         {
             interactMask = LayerMask.GetMask(
@@ -401,6 +401,8 @@ internal sealed class PickedPickableRespawnHoverProxy : MonoBehaviour, Hoverable
         return false;
     }
 
+    public float GetHoverOffset() => Target != null ? Target.GetHoverOffset() : 0f;
+
     public bool UseItem(Humanoid user, ItemDrop.ItemData item)
     {
         return false;
@@ -422,7 +424,7 @@ internal static class PickableGetHoverTextRespawnHoverPatch
     }
 }
 
-[HarmonyPatch(typeof(Pickable), nameof(Pickable.Awake))]
+[HarmonyPatch(typeof(Pickable), "Awake")]
 internal static class PickableAwakeRespawnHoverProxyPatch
 {
     [HarmonyPriority(Priority.Last)]

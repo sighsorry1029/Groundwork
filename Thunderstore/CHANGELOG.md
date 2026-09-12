@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.9
+
+- Updated Groundwork for Valheim 1.0.12's `PlayerProfile.s_bypassCheatChecks` field-to-property change, fixing repeated `MissingFieldException` failures when using the Hoe or Cultivator with Groundwork placement features.
+- Initialized the terrain range and aimed-height TMP labels only after assigning Valheim's HUD font, preventing missing `LiberationSans SDF` warnings.
+
+## 1.1.8
+
+- Updated Groundwork for Valheim 1.0.7, including original game assembly references, current method signatures, hover offsets, input paths, and cached access to required non-public members.
+- Updated the embedded ServerSync implementation for Valheim 1.0.7, preserving synchronized configuration initialization, administrator checks, version checks, and connection message ordering.
+- Preserved adjusted hoe and pickaxe terrain operations across network ownership boundaries using a validated, versioned settings extension without mutating shared vanilla prefab settings.
+- Updated mass planting for the new placement API, build statistics, Deep North snow restrictions, cheated-placement attribution, and global durability scaling.
+- Prevented the Farming tooltip's custom layout from leaking into other reused Valheim 1.0.7 tooltip views.
+- Updated the required BepInExPack Valheim dependency to 5.4.2350.
+
 ## 1.1.7
 
 - readme change

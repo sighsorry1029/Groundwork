@@ -354,7 +354,7 @@ internal static class PickaxeTerrainScalingSystem
             return false;
         }
 
-        profile = new TerrainCostProfile(attack?.GetAttackStamina() ?? 0f, totalStaminaMultiplier, totalDurabilityMultiplier, selectedScale);
+        profile = new TerrainCostProfile(attack != null ? GameAccess.AttackStamina(attack) : 0f, totalStaminaMultiplier, totalDurabilityMultiplier, selectedScale);
         return true;
     }
 
@@ -454,15 +454,15 @@ internal static class PickaxeTerrainScalingSystem
 
     private static bool TryResolveEquippedPickaxeTerrainDig(Player player, out ItemDrop.ItemData? weapon)
     {
-        weapon = player.GetRightItem();
+        weapon = GameAccess.RightItem(player);
         return TryGetTerrainDigRule(weapon, out _);
     }
 
     private static bool IsAlternateAttack(Character character, Attack attack)
     {
         return character is Humanoid humanoid &&
-               humanoid.m_currentAttack == attack &&
-               humanoid.m_currentAttackIsSecondary;
+               GameAccess.CurrentAttack(humanoid) == attack &&
+               GameAccess.SecondaryAttack(humanoid);
     }
 
     private static bool IsScaleModifierHeld()
@@ -613,7 +613,7 @@ internal static class PickaxeTerrainScalingSystem
     private static float GetItemDurabilityDrain(ItemDrop.ItemData? weapon)
     {
         float drain = weapon?.m_shared?.m_useDurabilityDrain ?? 0f;
-        return drain > 0f ? drain : 1f;
+        return (drain > 0f ? drain : 1f) * Game.m_durabilityRate;
     }
 
     private static void Apply(TerrainOp.Settings settings, float radiusScale, float depthScale)
@@ -769,7 +769,7 @@ internal static class PickaxeTerrainScalingSystem
 
             if (_attack != null)
             {
-                float stamina = _attack.GetAttackStamina() * extraStaminaMultiplier;
+                float stamina = GameAccess.AttackStamina(_attack) * extraStaminaMultiplier;
                 if (stamina > 0f)
                 {
                     _character.UseStamina(stamina);
@@ -972,7 +972,7 @@ internal static class PickaxeTerrainScalingSystem
     }
 }
 
-[HarmonyPatch(typeof(Attack), nameof(Attack.DoMeleeAttack))]
+[HarmonyPatch(typeof(Attack), "DoMeleeAttack")]
 internal static class AttackDoMeleeAttackPickaxeTerrainScalingPatch
 {
     private static void Prefix(Attack __instance)
@@ -1026,7 +1026,8 @@ internal static class AttackSpawnOnHitTerrainPickaxeScalingPatch
     typeof(int),
     typeof(bool),
     typeof(float),
-    typeof(int))]
+    typeof(int),
+    typeof(bool))]
 internal static class ItemDataGetTooltipPickaxeTerrainScalingPatch
 {
     private static void Postfix(ItemDrop.ItemData item, ref string __result)

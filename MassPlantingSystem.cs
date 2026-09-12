@@ -27,8 +27,6 @@ internal static class MassPlantingSystem
     private static readonly List<PlantPreviewGhost> PreviewGhosts = [];
     private static readonly List<Renderer> GhostRenderers = [];
     private static readonly MethodInfo? UpdatePlacementGhostMethod = AccessTools.Method(typeof(Player), "UpdatePlacementGhost", [typeof(bool)]);
-    private static readonly MethodInfo? GetBuildStaminaMethod = AccessTools.Method(typeof(Player), "GetBuildStamina");
-    private static readonly MethodInfo? GetPlaceDurabilityMethod = AccessTools.Method(typeof(Player), "GetPlaceDurability", [typeof(ItemDrop.ItemData)]);
     private static readonly FieldInfo? PlacementGhostField = AccessTools.Field(typeof(Player), "m_placementGhost");
 
     private static bool _gridPlantingMode;
@@ -79,6 +77,8 @@ internal static class MassPlantingSystem
         WrongBiome,
         NoGround,
         MoreSpace,
+        DeepSnow,
+        NoSnow,
         Invalid
     }
 
@@ -311,7 +311,10 @@ internal static class MassPlantingSystem
 
                 Quaternion plantRotation = ResolvePlantRotation(piece, rotation, basePosition, slot.Index, randomize: wantsMassPlant);
                 ZLog.Log("Placed " + piece.gameObject.name);
-                Game.instance?.IncrementPlayerStat(PlayerStatType.Builds);
+                bool cheated = (player.GetInventory().ItemCheated(piece.m_resources) || player.NoCostCheat()) &&
+                               !GameAccess.BypassCheatChecks;
+                Game.instance?.IncrementPlayerStat(PlayerStatType.Builds, 1f, cheated);
+                Game.instance?.GetPlayerProfile().IncrementStatBuildPiecePlaced(piece.m_name, 1f, cheated);
                 PendingPlantPlacement pendingPlacement = new(
                     plant != null ? plant.m_name : Utils.GetPrefabName(piece.gameObject),
                     plant == null,
@@ -320,7 +323,7 @@ internal static class MassPlantingSystem
                 _pendingPlantPlacement = pendingPlacement;
                 try
                 {
-                    player.PlacePiece(piece, position, plantRotation, doAttack: placed == 0);
+                    player.PlacePiece(piece, position, plantRotation, doAttack: placed == 0, cheated: cheated);
                 }
                 finally
                 {
@@ -1412,7 +1415,7 @@ internal static class MassPlantingSystem
         while (affordable < upper)
         {
             int candidate = affordable + (upper - affordable + 1) / 2;
-            if (player.HaveRequirementItems(requirementProbe, discover: false, qualityLevel: 0, amount: candidate))
+            if (GameAccess.HaveRequirementItems(player, requirementProbe, false, 0, candidate))
             {
                 affordable = candidate;
             }
@@ -1477,7 +1480,7 @@ internal static class MassPlantingSystem
 
     private static int ResolveDurabilityCount(Player player, int wantedCount)
     {
-        ItemDrop.ItemData? rightItem = player.GetRightItem();
+        ItemDrop.ItemData? rightItem = GameAccess.RightItem(player);
         if (rightItem?.m_shared.m_useDurability != true)
         {
             return wantedCount;
@@ -1623,7 +1626,7 @@ internal static class MassPlantingSystem
             player.UseStamina(staminaCost * extraPlacements);
         }
 
-        ItemDrop.ItemData? rightItem = player.GetRightItem();
+        ItemDrop.ItemData? rightItem = GameAccess.RightItem(player);
         if (rightItem?.m_shared.m_useDurability == true)
         {
             rightItem.m_durability -= GetPlaceDurability(player, rightItem) * extraPlacements;
@@ -1648,22 +1651,12 @@ internal static class MassPlantingSystem
 
     private static float GetBuildStamina(Player player)
     {
-        if (GetBuildStaminaMethod?.Invoke(player, []) is float stamina)
-        {
-            return stamina;
-        }
-
-        return player.GetRightItem()?.m_shared.m_attack.m_attackStamina ?? 0f;
+        return GameAccess.BuildStamina(player);
     }
 
     private static float GetPlaceDurability(Player player, ItemDrop.ItemData item)
     {
-        if (GetPlaceDurabilityMethod?.Invoke(player, [item]) is float durability)
-        {
-            return durability;
-        }
-
-        return item.m_shared.m_useDurabilityDrain;
+        return GameAccess.PlaceDurability(player, item) * Game.m_durabilityRate;
     }
 
     private static PlacementFailure ValidatePlantPosition(Player player, Piece piece, Plant? plant, Vector3 position)
@@ -1680,6 +1673,18 @@ internal static class MassPlantingSystem
         }
 
         Heightmap? heightmap = Heightmap.FindHeightmap(position);
+        bool deepNorth = player.GetCurrentBiome() == Heightmap.Biome.DeepNorth;
+        if (!piece.m_allowedInDeepSnow && deepNorth && heightmap != null &&
+            heightmap.GetCultivationMask(position) > player.m_deepSnowBuildHeight)
+        {
+            return PlacementFailure.DeepSnow;
+        }
+
+        if (piece.m_requireDeepSnow && (!deepNorth || heightmap == null || heightmap.GetCultivationMask(position) <= 0f))
+        {
+            return PlacementFailure.NoSnow;
+        }
+
         bool needsCultivatedGround = piece.m_cultivatedGroundOnly || plant != null && plant.m_needCultivatedGround;
         if ((piece.m_groundOnly || piece.m_groundPiece || needsCultivatedGround) && heightmap == null)
         {
@@ -1831,14 +1836,14 @@ internal static class MassPlantingSystem
             pendingPlacement.IsPickable ||
             plant == null ||
             !string.Equals(plant.m_name, pendingPlacement.PlantName, StringComparison.Ordinal) ||
-            plant.m_nview == null ||
-            !plant.m_nview.IsValid() ||
-            !plant.m_nview.IsOwner())
+            GameAccess.PlantView(plant) == null ||
+            !GameAccess.PlantView(plant).IsValid() ||
+            !GameAccess.PlantView(plant).IsOwner())
         {
             return;
         }
 
-        ZDO? zdo = plant.m_nview.GetZDO();
+        ZDO? zdo = GameAccess.PlantView(plant).GetZDO();
         if (zdo == null)
         {
             return;
@@ -1856,14 +1861,14 @@ internal static class MassPlantingSystem
             !pendingPlacement.IsPickable ||
             pickable == null ||
             !string.Equals(Utils.GetPrefabName(pickable.gameObject), pendingPlacement.PlantName, StringComparison.Ordinal) ||
-            pickable.m_nview == null ||
-            !pickable.m_nview.IsValid() ||
-            !pickable.m_nview.IsOwner())
+            GameAccess.PickableView(pickable) == null ||
+            !GameAccess.PickableView(pickable).IsValid() ||
+            !GameAccess.PickableView(pickable).IsOwner())
         {
             return;
         }
 
-        ZDO? zdo = pickable.m_nview.GetZDO();
+        ZDO? zdo = GameAccess.PickableView(pickable).GetZDO();
         if (zdo == null)
         {
             return;
@@ -1988,6 +1993,8 @@ internal static class MassPlantingSystem
             PlacementFailure.NeedDirt => "$msg_needdirt",
             PlacementFailure.WrongBiome => "$msg_wrongbiome",
             PlacementFailure.MoreSpace => "$msg_needspace",
+            PlacementFailure.DeepSnow => "$msg_snowtoodeep",
+            PlacementFailure.NoSnow => "$msg_nosnow",
             _ => "$msg_invalidplacement"
         };
         player.Message(MessageHud.MessageType.Center, message);

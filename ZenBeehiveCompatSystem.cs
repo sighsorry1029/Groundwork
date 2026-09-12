@@ -74,7 +74,7 @@ internal static class ZenBeehiveCompatSystem
             grid == null ||
             inventoryGui == null ||
             grid != inventoryGui.ContainerGrid ||
-            grid.m_elements.Count == 0)
+            GameAccess.InventoryElements(grid).Count == 0)
         {
             return;
         }
@@ -91,19 +91,19 @@ internal static class ZenBeehiveCompatSystem
             return;
         }
 
-        grid.m_elements[0].m_amount.text = $"{item.m_stack}/{BeehivePollinationSystem.GetEffectiveMaxHoney(beehive)}";
+        GameAccess.InventoryElements(grid)[0].m_amount.text = $"{item.m_stack}/{BeehivePollinationSystem.GetEffectiveMaxHoney(beehive)}";
     }
 
     private static int GetHoneyLevel(Beehive beehive)
     {
-        ZNetView? nview = beehive.m_nview;
+        ZNetView? nview = GameAccess.BeehiveView(beehive);
         ZDO? zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
         return Mathf.Max(0, zdo?.GetInt(ZDOVars.s_level) ?? 0);
     }
 
     private static bool IsValid(Beehive beehive)
     {
-        return beehive.m_nview != null && beehive.m_nview.IsValid();
+        return GameAccess.BeehiveView(beehive) != null && GameAccess.BeehiveView(beehive).IsValid();
     }
 }
 
@@ -137,7 +137,7 @@ internal static class InventoryGuiCloseContainerZenBeehiveCompatPatch
     }
 }
 
-[HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.OnTakeAll))]
+[HarmonyPatch(typeof(InventoryGui), "OnTakeAll")]
 [HarmonyAfter(ZenBeehiveCompatSystem.ZenBeehiveGuid)]
 internal static class InventoryGuiOnTakeAllZenBeehiveCompatPatch
 {
@@ -147,7 +147,7 @@ internal static class InventoryGuiOnTakeAllZenBeehiveCompatPatch
     }
 }
 
-[HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.OnDropOutside))]
+[HarmonyPatch(typeof(InventoryGui), "OnDropOutside")]
 [HarmonyAfter(ZenBeehiveCompatSystem.ZenBeehiveGuid)]
 internal static class InventoryGuiOnDropOutsideZenBeehiveCompatPatch
 {
@@ -159,7 +159,7 @@ internal static class InventoryGuiOnDropOutsideZenBeehiveCompatPatch
 
 [HarmonyPatch(
     typeof(InventoryGui),
-    nameof(InventoryGui.OnSelectedItem),
+    "OnSelectedItem",
     typeof(InventoryGrid),
     typeof(ItemDrop.ItemData),
     typeof(Vector2i),
@@ -193,7 +193,7 @@ internal static class HumanoidUseItemZenBeehiveCompatPatch
     }
 }
 
-[HarmonyPatch(typeof(InventoryGrid), nameof(InventoryGrid.UpdateGui), typeof(Player), typeof(ItemDrop.ItemData))]
+[HarmonyPatch(typeof(InventoryGrid), "UpdateGui", typeof(Player), typeof(ItemDrop.ItemData))]
 [HarmonyAfter(ZenBeehiveCompatSystem.ZenBeehiveGuid)]
 internal static class InventoryGridUpdateGuiZenBeehiveCompatPatch
 {

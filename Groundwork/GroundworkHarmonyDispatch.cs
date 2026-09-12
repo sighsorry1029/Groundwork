@@ -7,7 +7,7 @@ using UnityEngine.UI;
 
 namespace Groundwork;
 
-[HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.Awake))]
+[HarmonyPatch(typeof(ObjectDB), "Awake")]
 internal static class ObjectDbAwakeGroundworkPatch
 {
     private static void Postfix(ObjectDB __instance)
@@ -117,7 +117,7 @@ internal static class PlayerStartGroundworkPatch
     }
 }
 
-[HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Awake))]
+[HarmonyPatch(typeof(ZNetScene), "Awake")]
 internal static class ZNetSceneAwakeGroundworkPatch
 {
     private static void Postfix(ZNetScene __instance)
@@ -388,8 +388,8 @@ internal static class FarmingSkillTooltipPatch
                 tooltip.Set(
                     tooltip.m_topic,
                     text,
-                    tooltip.m_anchor,
-                    tooltip.m_fixedPosition);
+                    GameAccess.TooltipAnchor(tooltip),
+                    GameAccess.TooltipPosition(tooltip));
             }
 
             FarmingSkillTooltipPosition.Bind(__instance, tooltip);
@@ -413,11 +413,11 @@ internal static class FarmingSkillTooltipPatch
         int farmingIndex,
         string farmingDescription)
     {
-        if (dialog.m_elements != null &&
+        if (GameAccess.SkillElements(dialog) != null &&
             farmingIndex >= 0 &&
-            farmingIndex < dialog.m_elements.Count)
+            farmingIndex < GameAccess.SkillElements(dialog).Count)
         {
-            UITooltip? indexedTooltip = dialog.m_elements[farmingIndex]?
+            UITooltip? indexedTooltip = GameAccess.SkillElements(dialog)[farmingIndex]?
                 .GetComponentInChildren<UITooltip>();
             if (indexedTooltip != null &&
                 FarmingSkillTooltipText.MatchesSkillDescription(
@@ -482,6 +482,12 @@ internal static class FarmingSkillTooltipPositionPatch
     }
 }
 
+[HarmonyPatch(typeof(UITooltip), nameof(UITooltip.OnHoverStart))]
+internal static class UITooltipHoverStartGroundworkPatch
+{
+    private static void Prefix(UITooltip __instance) => FarmingSkillTooltipPosition.BeforeHover(__instance);
+}
+
 internal static class FarmingSkillTooltipPosition
 {
     // Match the vanilla SkillListTooltip body width; padding belongs to this runtime instance only.
@@ -493,6 +499,22 @@ internal static class FarmingSkillTooltipPosition
     private static readonly Vector3[] Corners = new Vector3[4];
     private static Binding? _binding;
     private static bool _failureLogged;
+
+    internal static void BeforeHover(UITooltip incoming)
+    {
+        Binding? binding = _binding;
+        UITooltip? current = GameAccess.CurrentTooltip();
+        if (binding == null || current == incoming ||
+            (current != binding.Tooltip && incoming != binding.Tooltip))
+        {
+            return;
+        }
+
+        // 1.0.7 reuses the shared root on focus changes. Our custom layout must not
+        // leak into another skill/item, or reuse an item tooltip when entering Farming.
+        UITooltip.HideTooltip();
+        binding.View = null;
+    }
 
     internal static void Bind(SkillsDialog dialog, UITooltip tooltip)
     {
@@ -537,8 +559,8 @@ internal static class FarmingSkillTooltipPosition
         Clear();
         _binding = new Binding(dialog, tooltip, panel, row, canvas, canvasRect);
         // Gamepad tooltips otherwise inherit the scroll viewport's mask through their vanilla anchor.
-        tooltip.m_anchor = canvasRect;
-        tooltip.m_fixedPosition = Vector2.zero;
+        GameAccess.TooltipAnchor(tooltip) = canvasRect;
+        GameAccess.TooltipPosition(tooltip) = Vector2.zero;
     }
 
     internal static void Clear()
@@ -550,10 +572,10 @@ internal static class FarmingSkillTooltipPosition
             return;
         }
 
-        binding.Tooltip.m_anchor = binding.OriginalAnchor;
-        binding.Tooltip.m_fixedPosition = binding.OriginalFixedPosition;
+        GameAccess.TooltipAnchor(binding.Tooltip) = binding.OriginalAnchor;
+        GameAccess.TooltipPosition(binding.Tooltip) = binding.OriginalFixedPosition;
         // UITooltip owns a shared root. Never hide the tooltip currently owned by another skill or item.
-        if (UITooltip.m_current == binding.Tooltip)
+        if (GameAccess.CurrentTooltip() == binding.Tooltip)
         {
             UITooltip.HideTooltip();
         }
@@ -570,7 +592,7 @@ internal static class FarmingSkillTooltipPosition
     internal static void UpdateVisibleTooltip(UITooltip tooltip)
     {
         Binding? binding = _binding;
-        if (binding == null || binding.Tooltip != tooltip || UITooltip.m_current != tooltip || UITooltip.m_tooltip == null)
+        if (binding == null || binding.Tooltip != tooltip || GameAccess.CurrentTooltip() != tooltip || GameAccess.TooltipRoot() == null)
         {
             return;
         }
@@ -585,7 +607,7 @@ internal static class FarmingSkillTooltipPosition
                 return;
             }
 
-            GameObject root = UITooltip.m_tooltip;
+            GameObject root = GameAccess.TooltipRoot();
             if (!root.activeSelf)
             {
                 return; // Preserve vanilla's hover delay and pointer-exit handling.
@@ -691,8 +713,8 @@ internal static class FarmingSkillTooltipPosition
             Row = row;
             Canvas = canvas;
             CanvasRect = canvasRect;
-            OriginalAnchor = tooltip.m_anchor;
-            OriginalFixedPosition = tooltip.m_fixedPosition;
+            OriginalAnchor = GameAccess.TooltipAnchor(tooltip);
+            OriginalFixedPosition = GameAccess.TooltipPosition(tooltip);
         }
     }
 
@@ -830,26 +852,6 @@ internal static class GameCameraUpdateCameraGroundworkPatch
         CameraZoomInputSuppressionSystem.BeginGameCameraUpdate();
     }
 
-    private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-    {
-        var inputGetAxis = AccessTools.Method(typeof(Input), nameof(Input.GetAxis), [typeof(string)]);
-        var inputGetAxisForCamera = AccessTools.Method(
-            typeof(CameraZoomInputSuppressionSystem),
-            nameof(CameraZoomInputSuppressionSystem.GetAxisForCamera));
-
-        foreach (CodeInstruction instruction in instructions)
-        {
-            if (instruction.Calls(inputGetAxis))
-            {
-                instruction.operand = inputGetAxisForCamera;
-                yield return instruction;
-                continue;
-            }
-
-            yield return instruction;
-        }
-    }
-
     private static void Finalizer()
     {
         CameraZoomInputSuppressionSystem.EndGameCameraUpdate();
@@ -877,12 +879,6 @@ internal static class CameraZoomInputSuppressionSystem
         InsideGameCameraUpdate = false;
     }
 
-    internal static float GetAxisForCamera(string axisName)
-    {
-        float value = Input.GetAxis(axisName);
-        return IsMouseScrollAxis(axisName) && ShouldSuppressCameraZoomInput() ? 0f : value;
-    }
-
     internal static bool ShouldBlockZInputMouseScrollWheel()
     {
         return InsideGameCameraUpdate && ShouldSuppressCameraZoomInput();
@@ -895,11 +891,6 @@ internal static class CameraZoomInputSuppressionSystem
                PickaxeTerrainScalingSystem.ShouldSuppressCameraZoomInput();
     }
 
-    private static bool IsMouseScrollAxis(string axisName)
-    {
-        return axisName.Equals("Mouse ScrollWheel", StringComparison.OrdinalIgnoreCase) ||
-               axisName.Equals("Mouse Scroll Wheel", StringComparison.OrdinalIgnoreCase);
-    }
 }
 
 [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetMouseScrollWheel))]

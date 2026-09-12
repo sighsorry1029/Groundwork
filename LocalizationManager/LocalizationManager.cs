@@ -17,6 +17,11 @@ namespace LocalizationManager;
 
 public class Localizer
 {
+    private static readonly AccessTools.FieldRef<Localization, Dictionary<string, string>> Translations =
+        AccessTools.FieldRefAccess<Localization, Dictionary<string, string>>("m_translations");
+    private static readonly Action<Localization, string, string> AddWord =
+        AccessTools.MethodDelegate<Action<Localization, string, string>>(AccessTools.DeclaredMethod(
+            typeof(Localization), "AddWord", new[] { typeof(string), typeof(string) }));
     private static readonly Dictionary<string, Dictionary<string, Func<string>>> PlaceholderProcessors = new();
     private static readonly Dictionary<string, Dictionary<string, string>> LoadedTexts = new();
     private static ConditionalWeakTable<Localization, LanguageState> LocalizationLanguages = new();
@@ -68,10 +73,10 @@ public class Localizer
                 AccessTools.DeclaredMethod(typeof(Localization), nameof(Localization.SetupLanguage)),
                 postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(LoadLocalization))));
             harmony.Patch(
-                AccessTools.DeclaredMethod(typeof(FejdStartup), nameof(FejdStartup.SetupGui)),
+                AccessTools.DeclaredMethod(typeof(FejdStartup), "SetupGui"),
                 postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(LoadLocalizationLater))));
             harmony.Patch(
-                AccessTools.DeclaredMethod(typeof(FejdStartup), nameof(FejdStartup.Start)),
+                AccessTools.DeclaredMethod(typeof(FejdStartup), "Start"),
                 postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(SafeCallLocalizeComplete))));
             _harmony = harmony;
             _patched = true;
@@ -146,13 +151,13 @@ public class Localizer
 
             if (!LocalizationLanguages.TryGetValue(localization, out LanguageState state) ||
                 !LoadedTexts.TryGetValue(state.Language, out Dictionary<string, string> texts) ||
-                localization.m_translations.ContainsKey(key))
+                Translations(localization).ContainsKey(key))
             {
                 continue;
             }
 
             texts[key] = text;
-            localization.AddWord(key, text);
+            AddWord(localization, key, text);
         }
 
         foreach (WeakReference<Localization> reference in remove)
@@ -268,7 +273,7 @@ public class Localizer
             text = textProcessors.Aggregate(text, (current, entry) => current.Replace("{" + entry.Key + "}", entry.Value()));
         }
 
-        localization.AddWord(key, text);
+        AddWord(localization, key, text);
     }
 
     private static byte[]? LoadTranslationFromAssembly(string language)

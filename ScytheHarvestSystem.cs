@@ -20,14 +20,10 @@ internal static class ScytheHarvestSystem
 
     internal static bool ShouldOverrideVanillaHarvest(Attack attack)
     {
-        return attack is
-               {
-                   m_harvest: true,
-                   m_character: not null,
-                   m_weapon.m_shared: not null
-               } &&
-               (Object)(object)attack.m_character == (Object)(object)Player.m_localPlayer &&
-               attack.m_weapon.m_shared.m_skillType == Skills.SkillType.Farming &&
+        return attack != null && attack.m_harvest &&
+               GameAccess.Attacker(attack) != null && attack.GetWeapon()?.m_shared != null &&
+               GameAccess.Attacker(attack) == Player.m_localPlayer &&
+               attack.GetWeapon().m_shared.m_skillType == Skills.SkillType.Farming &&
                attack.m_harvestRadiusMaxLevel > 0f;
     }
 
@@ -115,9 +111,9 @@ internal static class ScytheHarvestSystem
     {
         CultivatedPickablePrefabNames.Clear();
         _cultivatedPickableScene = scene;
-        _cultivatedPickableScenePrefabCount = scene.m_namedPrefabs.Count;
+        _cultivatedPickableScenePrefabCount = GameAccess.NamedPrefabs(scene).Count;
 
-        foreach (GameObject prefab in scene.m_namedPrefabs.Values)
+        foreach (GameObject prefab in GameAccess.NamedPrefabs(scene).Values)
         {
             if (prefab == null)
             {
@@ -164,7 +160,7 @@ internal static class ScytheHarvestSystem
         }
 
         if (_cultivatedPickableScene != scene ||
-            _cultivatedPickableScenePrefabCount != scene.m_namedPrefabs.Count)
+            _cultivatedPickableScenePrefabCount != GameAccess.NamedPrefabs(scene).Count)
         {
             RefreshCultivatedPickables(scene);
         }
@@ -176,7 +172,7 @@ internal static class ScytheHarvestSystem
 
     private static Vector3 ResolveHarvestCenter(Attack attack)
     {
-        Character character = attack.m_character;
+        Character character = GameAccess.Attacker(attack);
         Transform origin = ResolveAttackOrigin(attack, character);
         Vector3 attackDir = ResolveMeleeAttackDirection(attack, character, origin);
         return origin.position +
@@ -267,7 +263,7 @@ internal static class ScytheHarvestSystem
     }
 }
 
-[HarmonyPatch(typeof(Attack), nameof(Attack.DoMeleeAttack))]
+[HarmonyPatch(typeof(Attack), "DoMeleeAttack")]
 internal static class AttackDoMeleeAttackScytheHarvestPatch
 {
     private static void Prefix(Attack __instance, out bool __state)

@@ -38,8 +38,8 @@ internal static class EnvironmentEffectSystem
         if (unloadedCatchup ||
             !IsLoadedBeehiveProductionPausedByWetEnvironment() ||
             beehive == null ||
-            beehive.m_nview == null ||
-            !beehive.m_nview.IsValid())
+            GameAccess.BeehiveView(beehive) == null ||
+            !GameAccess.BeehiveView(beehive).IsValid())
         {
             return false;
         }
@@ -52,8 +52,8 @@ internal static class EnvironmentEffectSystem
     internal static void PauseBeehiveProduction(Beehive beehive)
     {
         if (beehive == null ||
-            beehive.m_nview == null ||
-            !beehive.m_nview.IsValid())
+            GameAccess.BeehiveView(beehive) == null ||
+            !GameAccess.BeehiveView(beehive).IsValid())
         {
             return;
         }
@@ -63,9 +63,9 @@ internal static class EnvironmentEffectSystem
             beehive.m_beeEffect.SetActive(false);
         }
 
-        if (beehive.m_nview.IsOwner() && ZNet.instance != null)
+        if (GameAccess.BeehiveView(beehive).IsOwner() && ZNet.instance != null)
         {
-            ZDO? zdo = beehive.m_nview.GetZDO();
+            ZDO? zdo = GameAccess.BeehiveView(beehive).GetZDO();
             zdo?.Set(ZDOVars.s_lastTime, ZNet.instance.GetTime().Ticks);
         }
     }

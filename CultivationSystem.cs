@@ -421,7 +421,7 @@ internal static class CultivationSystem
             return prefab;
         }
 
-        return _scene.m_namedPrefabs.Values.FirstOrDefault(candidate => candidate != null &&
+        return GameAccess.NamedPrefabs(_scene).Values.FirstOrDefault(candidate => candidate != null &&
             string.Equals(Utils.GetPrefabName(candidate), name, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -523,7 +523,7 @@ internal static class CultivationSystem
 
     internal static bool RestrictsCultivatorRemoval(Player player) =>
         !_originalCanRemove && _cultivatorTable != null &&
-        player.GetRightItem()?.m_shared?.m_buildPieces == _cultivatorTable;
+        GameAccess.RightItem(player)?.m_shared?.m_buildPieces == _cultivatorTable;
 
     private sealed class Registration
     {
@@ -732,7 +732,7 @@ internal static class CultivationRemovalRayPatch
     private static void Prefix(Player __instance, out int? __state)
     {
         __state = null;
-        if (RemoveMask == null || __instance.GetRightItem()?.m_shared?.m_name != "$item_cultivator")
+        if (RemoveMask == null || GameAccess.RightItem(__instance)?.m_shared?.m_name != "$item_cultivator")
         {
             return;
         }

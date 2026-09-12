@@ -39,7 +39,7 @@ internal static class PickedVisualSystem
 
         Transform existing = pickable.transform.Find(VisualName);
         bool validInstance = pickable.gameObject.scene.IsValid() && pickable.gameObject.activeInHierarchy &&
-                             pickable.GetEnabled == 1 && pickable.m_nview != null && pickable.m_nview.IsValid();
+                             pickable.GetEnabled == 1 && GameAccess.PickableView(pickable) != null && GameAccess.PickableView(pickable).IsValid();
         bool hasPlantedFern = RefreshPlantedFern(pickable, validInstance);
         string prefabName = Utils.GetPrefabName(pickable.gameObject);
         if (!validInstance || hasPlantedFern || !pickable.GetPicked() ||

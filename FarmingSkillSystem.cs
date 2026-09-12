@@ -773,8 +773,8 @@ internal static class FarmingSkillSystem
             return false;
         }
 
-        double elapsedSeconds = Math.Max(0.0, plant.TimeSincePlanted());
-        float equivalentGrowTime = plant.GetGrowTime();
+        double elapsedSeconds = Math.Max(0.0, GameAccess.TimeSincePlanted(plant));
+        float equivalentGrowTime = GameAccess.GrowTime(plant);
         if (equivalentGrowTime <= 0f)
         {
             return false;
@@ -834,7 +834,7 @@ internal static class FarmingSkillSystem
             return;
         }
 
-        double elapsedSeconds = Math.Max(0.0, plant.TimeSincePlanted());
+        double elapsedSeconds = Math.Max(0.0, GameAccess.TimeSincePlanted(plant));
         double accumulatedWork = elapsedSeconds + Math.Max(0f, bonusWork);
         if (elapsedSeconds <= 0.0001 || accumulatedWork <= 0.0001)
         {
@@ -901,7 +901,7 @@ internal static class FarmingSkillSystem
         float seedFraction;
         try
         {
-            UnityEngine.Random.InitState(plant.m_seed);
+            UnityEngine.Random.InitState(GameAccess.PlantSeed(plant));
             seedFraction = UnityEngine.Random.value;
         }
         finally
@@ -1067,7 +1067,7 @@ internal static class FarmingSkillSystem
     {
         foreach (Player player in Player.GetAllPlayers())
         {
-            ZNetView? nview = ((Character)player).m_nview;
+            ZNetView? nview = GameAccess.CharacterView(player);
             ZDO? zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
             if (zdo != null && zdo.m_uid.UserID == sender)
             {
@@ -1233,7 +1233,7 @@ internal static class FarmingSkillSystem
     private static bool TryGetPickableZdo(Pickable pickable, bool requireOwner, out ZDO? zdo)
     {
         zdo = null;
-        ZNetView? nview = pickable.m_nview;
+        ZNetView? nview = GameAccess.PickableView(pickable);
         if (nview == null || !nview.IsValid() || (requireOwner && !nview.IsOwner()))
         {
             return false;
@@ -1246,7 +1246,7 @@ internal static class FarmingSkillSystem
     private static bool TryGetPlantZdo(Plant plant, bool requireOwner, out ZDO? zdo)
     {
         zdo = null;
-        ZNetView? nview = plant.m_nview;
+        ZNetView? nview = GameAccess.PlantView(plant);
         if (nview == null || !nview.IsValid() || (requireOwner && !nview.IsOwner()))
         {
             return false;
@@ -1318,7 +1318,7 @@ internal static class PickableSetPickedForagingSkillPatch
     }
 }
 
-[HarmonyPatch(typeof(Pickable), nameof(Pickable.ShouldRespawn))]
+[HarmonyPatch(typeof(Pickable), "ShouldRespawn")]
 internal static class PickableShouldRespawnForagingPatch
 {
     private static bool Prefix(Pickable __instance, ref bool __result)
