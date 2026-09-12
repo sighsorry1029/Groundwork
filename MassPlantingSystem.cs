@@ -276,6 +276,7 @@ internal static class MassPlantingSystem
         int placed = 0;
 
         _placingBatch = true;
+        bool interrupted = false;
         try
         {
             ReservedPlantPositions.Clear();
@@ -323,6 +324,17 @@ internal static class MassPlantingSystem
                 {
                     player.PlacePiece(piece, position, plantRotation, doAttack: placed == 0, cheated: cheated);
                 }
+                catch
+                {
+                    // A synchronous Plant.Awake/Piece.SetCreator handoff proves that the
+                    // networked placement exists even if a later PlacePiece callback fails.
+                    if (pendingPlacement.Consumed)
+                    {
+                        placed++;
+                    }
+
+                    throw;
+                }
                 finally
                 {
                     if (ReferenceEquals(_pendingPlantPlacement, pendingPlacement))
@@ -331,6 +343,7 @@ internal static class MassPlantingSystem
                     }
                 }
 
+                placed++;
                 if (!pendingPlacement.Consumed)
                 {
                     if (!_reportedPlantAwakeHandoffFallback)
@@ -344,14 +357,24 @@ internal static class MassPlantingSystem
                 }
 
                 ReservedPlantPositions.Add(position);
-                placed++;
             }
+        }
+        catch
+        {
+            interrupted = true;
+            throw;
         }
         finally
         {
             _placingBatch = false;
             PlantSlots.Clear();
             ReservedPlantPositions.Clear();
+            if (interrupted)
+            {
+                // Player.Update cannot perform its normal one-placement charge after
+                // an exception, so settle every placement known to have completed.
+                TryPayInterruptedPlacementCosts(player, piece, placed);
+            }
         }
 
         if (placed <= 0)
@@ -361,7 +384,7 @@ internal static class MassPlantingSystem
             return false;
         }
 
-        PayExtraPlacementCosts(player, piece, placed - 1);
+        PayPlacementCosts(player, piece, placed - 1);
         RaiseExtraMassPlantSkill(player, placed - 1);
         InvalidateAffordableCountCache();
         result = true;
@@ -1605,28 +1628,52 @@ internal static class MassPlantingSystem
         }
     }
 
-    private static void PayExtraPlacementCosts(Player player, Piece piece, int extraPlacements)
+    private static void TryPayInterruptedPlacementCosts(Player player, Piece piece, int placements)
     {
-        if (extraPlacements <= 0)
+        if (placements <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            PayPlacementCosts(player, piece, placements);
+        }
+        catch (Exception exception)
+        {
+            // Preserve the placement exception that interrupted the batch.
+            GroundworkPlugin.ModLogger.LogError(
+                "Could not settle costs for an interrupted mass planting batch: " +
+                exception.GetBaseException().Message);
+        }
+        finally
+        {
+            InvalidateAffordableCountCache();
+        }
+    }
+
+    private static void PayPlacementCosts(Player player, Piece piece, int placements)
+    {
+        if (placements <= 0)
         {
             return;
         }
 
         if (!player.NoCostCheat() && !ZoneSystem.instance.GetGlobalKey(piece.FreeBuildKey()))
         {
-            player.ConsumeResources(piece.m_resources, 0, multiplier: extraPlacements);
+            player.ConsumeResources(piece.m_resources, 0, multiplier: placements);
         }
 
         float staminaCost = GetBuildStamina(player);
         if (staminaCost > 0f)
         {
-            player.UseStamina(staminaCost * extraPlacements);
+            player.UseStamina(staminaCost * placements);
         }
 
         ItemDrop.ItemData? rightItem = GameAccess.RightItem(player);
         if (rightItem?.m_shared.m_useDurability == true)
         {
-            rightItem.m_durability -= GetPlaceDurability(player, rightItem) * extraPlacements;
+            rightItem.m_durability -= GetPlaceDurability(player, rightItem) * placements;
         }
     }
 
