@@ -1,9 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.1.10
 
 - Added independent client-only `Off`, `Compact`, and `Detailed` hover-hint modes for growing crops, picked respawning forage targets, and beehives. These settings affect display only; growth, respawn, pollination, honey production, Farming effects, and forage proxy target discovery remain active.
 - Replaced `Beehive Hover Explanation` with `Beehive Hover Hint`; existing values are not migrated.
+- Fixed `LiberationSans SDF` missing-font warnings from pickaxe terrain-change text, the mass-planting limit label, and mouse-wheel key-hint separators by assigning the Valheim HUD font before activation.
+- Fixed interrupted mass-planting batches leaving confirmed placements unpaid when another callback throws; completed placements now consume their corresponding resources, stamina, and tool durability without hiding the original error.
+- Limited pickaxe terrain input updates to the local player and reduced repeated placement-ghost reflection in frequently executed placement paths.
+- Restored BepInEx's original `SaveOnConfigSet` value when Groundwork initialization fails, while preserving the existing startup order and error propagation.
+- Added repeatable compatibility checks against the original Valheim client and dedicated-server assemblies and the game's Unity Mono runtime.
 
 ## 1.1.9
 
