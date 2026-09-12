@@ -475,6 +475,7 @@
     <Compile Include="PickedVisualSystem.cs" />
     <Compile Include="GrowthReferenceOwnership.cs" />
     <Compile Include="FarmingSkillSystem.cs" />
+    <Compile Include="FarmingSkillTooltipSystem.cs" />
     <Compile Include="BeehivePollinationSystem.cs" />
     <Compile Include="ZenBeehiveCompatSystem.cs" />
     <Compile Include="EnvironmentEffectSystem.cs" />
