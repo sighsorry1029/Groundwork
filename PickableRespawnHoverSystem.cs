@@ -14,7 +14,8 @@ internal static class PickableRespawnHoverSystem
 
     internal static void AppendHoverText(Pickable pickable, ref string hoverText)
     {
-        if (pickable == null)
+        GroundworkPlugin.HoverHintMode hoverMode = GroundworkToolsDomain.ForagingHoverHintMode;
+        if (hoverMode == GroundworkPlugin.HoverHintMode.Off || pickable == null)
         {
             return;
         }
@@ -34,15 +35,23 @@ internal static class PickableRespawnHoverSystem
         }
 
         EnsurePickableName(pickable, ref hoverText);
-        float farmingMultiplier = FarmingSkillSystem.GetForagingRespawnSpeedMultiplier(pickable);
-        float pollinationMultiplier = BeehivePollinationSystem.GetForagingRespawnMultiplierForHover(pickable);
-        float rainMultiplier = EnvironmentEffectSystem.GetWetForagingRespawnSpeedMultiplier(pickable);
+        bool includeMultipliers = hoverMode == GroundworkPlugin.HoverHintMode.Detailed;
+        float farmingMultiplier = includeMultipliers
+            ? FarmingSkillSystem.GetForagingRespawnSpeedMultiplier(pickable)
+            : 1f;
+        float pollinationMultiplier = includeMultipliers
+            ? BeehivePollinationSystem.GetForagingRespawnMultiplierForHover(pickable)
+            : 1f;
+        float rainMultiplier = includeMultipliers
+            ? EnvironmentEffectSystem.GetWetForagingRespawnSpeedMultiplier(pickable)
+            : 1f;
         AppendEffectHoverLines(
             ref hoverText,
             timing.RemainingSeconds,
             farmingMultiplier,
             pollinationMultiplier,
-            rainMultiplier);
+            rainMultiplier,
+            includeMultipliers);
     }
 
     internal static string GetHoverProxyText(Pickable pickable)
@@ -115,7 +124,9 @@ internal static class PickableRespawnHoverSystem
 
     internal static void AppendPlantHoverText(Plant plant, ref string hoverText)
     {
-        if (plant == null ||
+        GroundworkPlugin.HoverHintMode hoverMode = GroundworkToolsDomain.CropHoverHintMode;
+        if (hoverMode == GroundworkPlugin.HoverHintMode.Off ||
+            plant == null ||
             plant.GetStatus() != Plant.Status.Healthy)
         {
             return;
@@ -129,15 +140,23 @@ internal static class PickableRespawnHoverSystem
             return;
         }
 
-        float farmingMultiplier = FarmingSkillSystem.GetPlantGrowSpeedMultiplier(plant);
-        float pollinationMultiplier = BeehivePollinationSystem.GetPlantGrowthMultiplierForHover(plant);
-        float rainMultiplier = EnvironmentEffectSystem.GetWetPlantGrowSpeedMultiplier();
+        bool includeMultipliers = hoverMode == GroundworkPlugin.HoverHintMode.Detailed;
+        float farmingMultiplier = includeMultipliers
+            ? FarmingSkillSystem.GetPlantGrowSpeedMultiplier(plant)
+            : 1f;
+        float pollinationMultiplier = includeMultipliers
+            ? BeehivePollinationSystem.GetPlantGrowthMultiplierForHover(plant)
+            : 1f;
+        float rainMultiplier = includeMultipliers
+            ? EnvironmentEffectSystem.GetWetPlantGrowSpeedMultiplier()
+            : 1f;
         AppendEffectHoverLines(
             ref hoverText,
             remainingSeconds,
             farmingMultiplier,
             pollinationMultiplier,
-            rainMultiplier);
+            rainMultiplier,
+            includeMultipliers);
     }
 
     private static void AppendEffectHoverLines(
@@ -145,16 +164,20 @@ internal static class PickableRespawnHoverSystem
         float remainingSeconds,
         float farmingMultiplier,
         float pollinationMultiplier,
-        float rainMultiplier)
+        float rainMultiplier,
+        bool includeMultipliers)
     {
-        List<string> parts = [];
-        AddMultiplierPart(parts, farmingMultiplier, "groundwork_factor_farming", "farming {0}");
-        AddMultiplierPart(parts, pollinationMultiplier, "groundwork_factor_pollination", "pollination {0}");
-        AddMultiplierPart(parts, rainMultiplier, "groundwork_factor_rain", "rain {0}");
-
-        if (parts.Count > 0)
+        if (includeMultipliers)
         {
-            AppendLine(ref hoverText, Colorize(string.Join(" ", parts)));
+            List<string> parts = [];
+            AddMultiplierPart(parts, farmingMultiplier, "groundwork_factor_farming", "farming {0}");
+            AddMultiplierPart(parts, pollinationMultiplier, "groundwork_factor_pollination", "pollination {0}");
+            AddMultiplierPart(parts, rainMultiplier, "groundwork_factor_rain", "rain {0}");
+
+            if (parts.Count > 0)
+            {
+                AppendLine(ref hoverText, Colorize(string.Join(" ", parts)));
+            }
         }
 
         AppendLine(ref hoverText, Colorize(GroundworkLocalization.FormatDuration(remainingSeconds)));

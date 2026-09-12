@@ -670,7 +670,9 @@ internal static class BeehivePollinationSystem
     // Beehive hover text and harvest bookkeeping.
     internal static void AppendHoverText(Beehive beehive, ref string hoverText)
     {
-        if (beehive == null ||
+        GroundworkPlugin.HoverHintMode hoverMode = GroundworkToolsDomain.BeehiveHoverHintMode;
+        if (hoverMode == GroundworkPlugin.HoverHintMode.Off ||
+            beehive == null ||
             !IsValid(beehive) ||
             !PrivateArea.CheckAccess(beehive.transform.position, 0f, flash: false))
         {
@@ -728,7 +730,10 @@ internal static class BeehivePollinationSystem
                 "Next honey: {0}",
                 HighlightValue(nextHoney));
         AppendLine(ref hoverText, Colorize(nextHoneyLine));
-        AppendHoverExplanation(beehive, ref hoverText);
+        if (hoverMode == GroundworkPlugin.HoverHintMode.Detailed)
+        {
+            AppendHoverExplanation(beehive, ref hoverText);
+        }
     }
 
     internal static void StoreTendedFarmingLevel(Beehive beehive, long sender)
@@ -1622,11 +1627,6 @@ internal static class BeehivePollinationSystem
 
     private static void AppendHoverExplanation(Beehive beehive, ref string hoverText)
     {
-        if (!GroundworkToolsDomain.BeehiveHoverExplanationEnabled)
-        {
-            return;
-        }
-
         bool coverSpeedsHoney =
             beehive.m_maxCover > 0f &&
             beehive.m_coverPoint != null &&

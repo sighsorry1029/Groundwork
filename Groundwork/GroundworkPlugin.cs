@@ -60,6 +60,13 @@ public class GroundworkPlugin : BaseUnityPlugin
         Off = 0
     }
 
+    public enum HoverHintMode
+    {
+        Off,
+        Compact,
+        Detailed
+    }
+
     public enum TerrainToolRangePreviewMode
     {
         Vanilla,
@@ -380,7 +387,9 @@ public class GroundworkPlugin : BaseUnityPlugin
         internal ConfigEntry<float> ForagingPickupMaxRange = null!;
         internal ConfigEntry<float> ForagingRespawnSpeedFactor = null!;
         internal ConfigEntry<float> PlantGrowSpeedFactor = null!;
-        internal ConfigEntry<Toggle> BeehiveHoverExplanation = null!;
+        internal ConfigEntry<HoverHintMode> CropHoverHint = null!;
+        internal ConfigEntry<HoverHintMode> ForagingHoverHint = null!;
+        internal ConfigEntry<HoverHintMode> BeehiveHoverHint = null!;
         internal ConfigEntry<int> BeehiveCapacityFarmingLevelsPerBonusHoney = null!;
         internal ConfigEntry<float> BeehiveFarmingSkillGainPerHoney = null!;
         internal ConfigEntry<float> BeehiveCoverMaxSpeedMultiplier = null!;
@@ -412,7 +421,10 @@ public class GroundworkPlugin : BaseUnityPlugin
             ForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Foraging Respawn Speed Factor", 5f, new ConfigDescription("Respawn speed factor at Farming skill 100 for foraging-style pickables. Targets need a positive base respawn time and must either drop edible food or be explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 0 disables this feature.", new AcceptableValueRange<float>(0f, 20f)), synchronizedSetting: true);
             WetEnvironmentPlantGrowSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Plant Grow Speed Factor", 2f, new ConfigDescription("Plant growth speed factor while the current environment is wet. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
             WetEnvironmentForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Foraging Respawn Speed Factor", 2f, new ConfigDescription("Foraging respawn speed factor while the current environment is wet. Applies to automatic edible targets and prefabs explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
-            BeehiveHoverExplanation = plugin.config(beehivesGroup, "Beehive Hover Explanation", Toggle.On, "If on, beehive hover text explains how openness, nearby growing targets, and stored honey affect honey production and nearby growth.", synchronizedSetting: false);
+            CropHoverHint = plugin.config(plantsAndForagingGroup, "Crop Hover Hint", HoverHintMode.Detailed, "Controls Groundwork details added to growing crop hover text. Off keeps vanilla text, Compact adds only remaining growth time, and Detailed also adds active Farming, pollination, and rain multipliers.", synchronizedSetting: false);
+            ForagingHoverHint = plugin.config(plantsAndForagingGroup, "Foraging Hover Hint", HoverHintMode.Detailed, "Controls Groundwork details shown for picked respawning forage targets. Off keeps only the target name when Groundwork must provide a hidden hover proxy, Compact adds only remaining respawn time, and Detailed also adds active Farming, pollination, and rain multipliers. Pollination and target discovery remain active in every mode.", synchronizedSetting: false);
+
+            BeehiveHoverHint = plugin.config(beehivesGroup, "Beehive Hover Hint", HoverHintMode.Detailed, "Controls Groundwork details added to beehive hover text. Off keeps vanilla text, Compact adds capacity, production modifiers, and next-honey timing, and Detailed also explains how the configured bonuses work. Honey production, growth bonuses, and Farming effects remain active in every mode.", synchronizedSetting: false);
             BeehiveCapacityFarmingLevelsPerBonusHoney = plugin.config(beehivesGroup, "Beehive Capacity Farming Levels Per Bonus Honey", 20, new ConfigDescription("Farming levels required for each +1 beehive honey capacity. 0 disables the capacity bonus.", new AcceptableValueRange<int>(0, 100)), synchronizedSetting: true);
             BeehiveFarmingSkillGainPerHoney = plugin.config(beehivesGroup, "Beehive Farming Skill Gain Per Honey", 0.25f, new ConfigDescription("Farming skill gain for each honey harvested from a beehive. 0 disables this bonus.", new AcceptableValueRange<float>(0f, 5f)), synchronizedSetting: true);
             BeehiveCoverMaxSpeedMultiplier = plugin.config(beehivesGroup, "Beehive Cover Max Speed Multiplier", 3f, new ConfigDescription("Honey production multiplier at 0% cover. The bonus scales linearly from x1 at the beehive max cover threshold to this value when fully open.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);

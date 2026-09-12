@@ -86,6 +86,8 @@ Groundwork adds compact hover information to:
 - Plants: remaining growth time, rain growth, pollination growth.
 - Foraging pickables: remaining respawn time, rain respawn, pollination respawn.
 
+The client-only `Crop Hover Hint`, `Foraging Hover Hint`, and `Beehive Hover Hint` settings each support `Off`, `Compact`, and `Detailed`. `Off` keeps vanilla text; a hidden harvested forage target keeps only its name when Groundwork must provide a hover proxy. `Compact` shows timing and, for beehives, the production summary. `Detailed` also shows active crop/foraging multipliers or the beehive explanation. These display settings do not change growth, respawn, pollination, honey production, Farming effects, or proxy-based target discovery.
+
 ## Groundwork.yml
 
 `BepInEx/config/Groundwork/Groundwork.yml` defines terrain tool piece costs and adjustable ranges.

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added independent client-only `Off`, `Compact`, and `Detailed` hover-hint modes for growing crops, picked respawning forage targets, and beehives. These settings affect display only; growth, respawn, pollination, honey production, Farming effects, and forage proxy target discovery remain active.
+- Replaced `Beehive Hover Explanation` with `Beehive Hover Hint`; existing values are not migrated.
+
 ## 1.1.9
 
 - Updated Groundwork for Valheim 1.0.12's `PlayerProfile.s_bypassCheatChecks` field-to-property change, fixing repeated `MissingFieldException` failures when using the Hoe or Cultivator with Groundwork placement features.
