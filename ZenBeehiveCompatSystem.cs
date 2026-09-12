@@ -96,8 +96,7 @@ internal static class ZenBeehiveCompatSystem
 
     private static int GetHoneyLevel(Beehive beehive)
     {
-        ZNetView? nview = GameAccess.BeehiveView(beehive);
-        ZDO? zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
+        ZDO? zdo = BeehivePollinationSystem.GetZdo(beehive);
         return Mathf.Max(0, zdo?.GetInt(ZDOVars.s_level) ?? 0);
     }
 
