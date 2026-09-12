@@ -86,19 +86,24 @@ public class GroundworkPlugin : BaseUnityPlugin
 
         bool saveOnSet = Config.SaveOnConfigSet;
         Config.SaveOnConfigSet = false;
+        try
+        {
+            Settings.Bind(this);
+            _ = ConfigSync.AddLockingConfigEntry(Settings.General.LockConfiguration);
+            InitializeSyncedYamlValue();
+            GrowthOverrideSystem.Initialize(this, ConfigSync);
+            GroundworkConfigLoader.EnsureLocalFileExists(YamlConfigDirectoryPath, TerrainToolsYamlFilePath);
+            RefreshYamlAuthorityMode(force: true);
 
-        Settings.Bind(this);
-        _ = ConfigSync.AddLockingConfigEntry(Settings.General.LockConfiguration);
-        InitializeSyncedYamlValue();
-        GrowthOverrideSystem.Initialize(this, ConfigSync);
-        GroundworkConfigLoader.EnsureLocalFileExists(YamlConfigDirectoryPath, TerrainToolsYamlFilePath);
-        RefreshYamlAuthorityMode(force: true);
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            _harmony.PatchAll(assembly);
 
-        Assembly assembly = Assembly.GetExecutingAssembly();
-        _harmony.PatchAll(assembly);
-
-        Config.Save();
-        Config.SaveOnConfigSet = saveOnSet;
+            Config.Save();
+        }
+        finally
+        {
+            Config.SaveOnConfigSet = saveOnSet;
+        }
     }
 
     public void OnDestroy()
