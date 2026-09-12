@@ -40,11 +40,10 @@ internal static class PlayerUpdateGroundworkPatch
             {
                 MassPlantingSystem.UpdateInput(__instance);
                 TerrainToolRangeSystem.UpdateInput(__instance);
+                PickaxeTerrainScalingSystem.UpdateInput(__instance);
                 TerrainDigFloatingTextSystem.Update();
                 BeehivePollinationSystem.UpdateHoverPreview(__instance);
             }
-
-            PickaxeTerrainScalingSystem.UpdateInput(__instance);
         }
         finally
         {
