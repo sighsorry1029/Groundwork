@@ -12,7 +12,6 @@ internal static class TerrainDigFloatingTextSystem
     private const float FadeDuration = 1f;
     private const float VerticalOffset = 0.45f;
     private static readonly List<Entry> Entries = [];
-    private static readonly List<int> RemoveBuffer = [];
 
     internal static void Clear()
     {
@@ -25,7 +24,6 @@ internal static class TerrainDigFloatingTextSystem
         }
 
         Entries.Clear();
-        RemoveBuffer.Clear();
     }
 
     internal static void Show(Vector3 worldPosition, string text, Color color)
@@ -54,13 +52,12 @@ internal static class TerrainDigFloatingTextSystem
             return;
         }
 
-        RemoveBuffer.Clear();
-        for (int index = 0; index < Entries.Count; index++)
+        for (int index = Entries.Count - 1; index >= 0; index--)
         {
             Entry entry = Entries[index];
             if (entry.Label == null)
             {
-                RemoveBuffer.Add(index);
+                Entries.RemoveAt(index);
                 continue;
             }
 
@@ -68,7 +65,7 @@ internal static class TerrainDigFloatingTextSystem
             if (elapsed >= HoldDuration + FadeDuration)
             {
                 Object.Destroy(entry.Label.gameObject);
-                RemoveBuffer.Add(index);
+                Entries.RemoveAt(index);
                 continue;
             }
 
@@ -91,11 +88,6 @@ internal static class TerrainDigFloatingTextSystem
             color.a *= alpha;
             entry.Label.color = color;
             entry.Label.rectTransform.position = screenPoint;
-        }
-
-        for (int i = RemoveBuffer.Count - 1; i >= 0; i--)
-        {
-            Entries.RemoveAt(RemoveBuffer[i]);
         }
     }
 
