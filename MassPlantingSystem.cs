@@ -27,7 +27,6 @@ internal static class MassPlantingSystem
     private static readonly List<PlantPreviewGhost> PreviewGhosts = [];
     private static readonly List<Renderer> GhostRenderers = [];
     private static readonly MethodInfo? UpdatePlacementGhostMethod = AccessTools.Method(typeof(Player), "UpdatePlacementGhost", [typeof(bool)]);
-    private static readonly FieldInfo? PlacementGhostField = AccessTools.Field(typeof(Player), "m_placementGhost");
 
     private static bool _gridPlantingMode;
     private static bool _placingBatch;
@@ -226,8 +225,7 @@ internal static class MassPlantingSystem
     {
         if (_placingBatch ||
             !TryGetPlant(piece, out Plant? plantCandidate) ||
-            UpdatePlacementGhostMethod == null ||
-            PlacementGhostField == null)
+            UpdatePlacementGhostMethod == null)
         {
             return true;
         }
@@ -248,7 +246,7 @@ internal static class MassPlantingSystem
             return true;
         }
 
-        GameObject? ghost = PlacementGhostField.GetValue(player) as GameObject;
+        GameObject? ghost = GameAccess.PlacementGhost(player);
         if (ghost == null)
         {
             return true;
@@ -374,14 +372,13 @@ internal static class MassPlantingSystem
     {
         if (_placingBatch ||
             !_gridPlantingMode ||
-            PlacementGhostField == null ||
             player.GetPlacementStatus() != Player.PlacementStatus.Valid ||
             !TryGetSelectedPlant(player, out Piece? pieceCandidate, out Plant? plant))
         {
             return;
         }
 
-        GameObject? ghost = PlacementGhostField.GetValue(player) as GameObject;
+        GameObject? ghost = GameAccess.PlacementGhost(player);
         if (ghost == null)
         {
             return;
@@ -393,7 +390,6 @@ internal static class MassPlantingSystem
     internal static void UpdatePlacementPreview(Player player)
     {
         if (_placingBatch ||
-            PlacementGhostField == null ||
             !TryGetSelectedPlant(player, out Piece? pieceCandidate, out Plant? plantCandidate))
         {
             ClearPlacementPreview();
@@ -403,7 +399,7 @@ internal static class MassPlantingSystem
         Piece piece = pieceCandidate!;
         Plant? plant = plantCandidate;
         int currentPlantCount = GetCurrentPlantCount(player, piece);
-        GameObject? ghost = PlacementGhostField.GetValue(player) as GameObject;
+        GameObject? ghost = GameAccess.PlacementGhost(player);
         if (ghost == null || !ghost.activeInHierarchy)
         {
             ClearPlacementPreview();
@@ -1136,7 +1132,7 @@ internal static class MassPlantingSystem
             return true;
         }
 
-        if (PlacementGhostField?.GetValue(player) is GameObject ghost)
+        if (GameAccess.PlacementGhost(player) is GameObject ghost)
         {
             EnsureActivePlantGroupAxes(player, ghost);
         }
@@ -1737,7 +1733,7 @@ internal static class MassPlantingSystem
 
     private static bool HasPlantSpace(Player player, Piece piece, Plant? plant, Vector3 position)
     {
-        GameObject? placementGhost = PlacementGhostField?.GetValue(player) as GameObject;
+        GameObject? placementGhost = GameAccess.PlacementGhost(player);
         float radius = plant != null ? plant.m_growRadius : GetPickableMinimumSpacing(piece);
         int count = Physics.OverlapSphereNonAlloc(
             position,

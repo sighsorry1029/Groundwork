@@ -30,10 +30,6 @@ internal static class GrowthOverrideSystem
 
     private static readonly FarmingTupleYamlConverter FarmingTupleConverter = new();
     private static readonly BiomeListYamlConverter BiomeListConverter = new();
-    private static readonly FieldInfo? PlacementGhostField = typeof(Player).GetField(
-        "m_placementGhost",
-        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
     private delegate bool TryGetBiomeDelegate(string name, out Heightmap.Biome biome);
 
     private delegate Heightmap.Biome GetNatureDelegate(Heightmap.Biome biome);
@@ -361,7 +357,7 @@ internal static class GrowthOverrideSystem
 
     internal static PieceBiomeOverrideState BeginPlacementBiomeOverride(Player? player)
     {
-        if (player == null || PlacementGhostField?.GetValue(player) is not GameObject placementGhost)
+        if (player == null || GameAccess.PlacementGhost(player) is not GameObject placementGhost)
         {
             return default;
         }
@@ -404,7 +400,7 @@ internal static class GrowthOverrideSystem
     internal static void CheckCultivationPlacementBiome(Player player)
     {
         if (player.GetPlacementStatus() == Player.PlacementStatus.Valid &&
-            PlacementGhostField?.GetValue(player) is GameObject ghost &&
+            GameAccess.PlacementGhost(player) is GameObject ghost &&
             ghost.GetComponent<Piece>() is Piece piece &&
             CultivationSystem.HasPlacementBiomeOverride(piece) &&
             !CultivationSystem.IsPlacementBiomeAllowed(piece, Heightmap.FindHeightmap(ghost.transform.position), ghost.transform.position))

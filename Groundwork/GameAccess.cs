@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Groundwork;
 
-// Explicit, cached access to non-public members in the original Valheim 1.0.7 assemblies.
+// Explicit, cached access to non-public members in the original Valheim assemblies.
 // Keep shared bindings here so compilation never depends on publicized game DLLs.
 internal static class GameAccess
 {
