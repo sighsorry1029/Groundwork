@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.7
+
+- readme change
+
 ## 1.1.6
 
 - Standardized local Debug deployment on `DeployToGame=true`, copying only the final merged plugin DLL after successful compilation and merging. An unconfigured deployment destination now fails explicitly.
