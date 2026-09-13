@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.11
+
+- Prevented the Plant progress checkpoint patch from calling Unity component APIs on an already destroyed `ZNetView` during zone unloading, avoiding the resulting Groundwork `NullReferenceException` while preserving checkpoints for live Plants.
+
 ## 1.1.10
 
 - Added independent client-only `Off`, `Compact`, and `Detailed` hover-hint modes for growing crops, picked respawning forage targets, and beehives. These settings affect display only; growth, respawn, pollination, honey production, Farming effects, and forage proxy target discovery remain active.
