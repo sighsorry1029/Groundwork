@@ -1374,6 +1374,11 @@ internal static class PlantZdoResetDynamicProgressPatch
 {
     private static void Prefix(ZNetView __instance)
     {
+        if (!__instance)
+        {
+            return;
+        }
+
         Plant? plant = __instance.GetComponent<Plant>();
         if (plant != null)
         {
