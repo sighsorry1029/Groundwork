@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.12
+
+- Added the server-synced `Farming Range Harvest Targets` setting. The default `ForagingOnly` behavior is unchanged, while `ForagingAndCrops` extends Farming-scaled nearby harvesting to mature crops produced by Plant prefabs.
+- Added opt-in Cultivator removal of natural Pickables through a server-synced prefab allowlist. The default list covers branches, flint, dandelions, mushrooms, and thistles; removal keeps Valheim's normal placement, ward, ownership, and distance checks and grants no items.
+- Added the server-synced `Scythe Handle Required Global Key` setting. Groundwork now defaults the Bog Witch's `ScytheHandle` sale requirement to `defeated_bonemass` instead of Vanilla's `defeated_dragon`, while retaining Valheim's `ZoneSystem.GetGlobalKey` query so YouAreNotWorthy can apply per-player progression and provide discovery of additional global keys.
+
 ## 1.1.11
 
 - Prevented the Plant progress checkpoint patch from calling Unity component APIs on an already destroyed `ZNetView` during zone unloading, avoiding the resulting Groundwork `NullReferenceException` while preserving checkpoints for live Plants.
