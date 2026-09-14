@@ -49,7 +49,7 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
 ### Foraging
 
 - Edible respawning pickables, plus prefabs registered in `BepInEx/config/Groundwork/pickables.yml`, can be affected by Farming skill.
-- Higher Farming skill can increase nearby pickup range.
+- Higher Farming skill can increase nearby pickup range. `Farming Range Harvest Targets = ForagingAndCrops` also includes mature crops produced by Plant prefabs.
 - Higher Farming skill can speed up foraging respawn.
 - Rain can speed up foraging respawn while the current environment is wet.
 

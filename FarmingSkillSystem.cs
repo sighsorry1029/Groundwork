@@ -55,6 +55,16 @@ internal static class FarmingSkillSystem
         internal readonly bool HasPickedTime = hasPickedTime;
     }
 
+    internal readonly struct PickableInteractPatchState(
+        PickableInteractFarmingState? farmingState,
+        Vector3 rangePickupOrigin,
+        bool rangePickupEligible)
+    {
+        internal readonly PickableInteractFarmingState? FarmingState = farmingState;
+        internal readonly Vector3 RangePickupOrigin = rangePickupOrigin;
+        internal readonly bool RangePickupEligible = rangePickupEligible;
+    }
+
     internal sealed class PickableInteractFarmingState
     {
         private readonly Pickable _pickable;
@@ -134,6 +144,13 @@ internal static class FarmingSkillSystem
                DropsEdibleItem(pickable);
     }
 
+    internal static bool IsRangePickupTarget(Pickable? pickable)
+    {
+        return IsForagingTarget(pickable) ||
+               (GroundworkToolsDomain.FarmingRangeHarvestIncludesCrops &&
+                ScytheHarvestSystem.IsCultivatedPickable(pickable));
+    }
+
     internal static void RefreshForagingBonusEffectFallback(ZNetScene scene)
     {
         if (scene == null)
@@ -211,18 +228,38 @@ internal static class FarmingSkillSystem
         }
     }
 
-    internal static void TryPickupNearbyForagingTargets(Pickable source, Humanoid character)
+    internal static PickableInteractPatchState BeginPickableInteract(
+        Pickable source,
+        Humanoid character)
+    {
+        bool rangePickupEligible = !_rangePicking &&
+                                   _suppressRangePickup == 0 &&
+                                   character is Player &&
+                                   GroundworkToolsDomain.ForagingPickupMaxRange > 0f &&
+                                   IsRangePickupTarget(source);
+        Vector3 origin = rangePickupEligible ? source.transform.position : default;
+        return new PickableInteractPatchState(
+            BeginFarmingInteract(source, character),
+            origin,
+            rangePickupEligible);
+    }
+
+    internal static void TryPickupNearbyFarmingTargets(
+        Pickable source,
+        Humanoid character,
+        Vector3 origin,
+        bool sourceIsRangePickupTarget)
     {
         if (_rangePicking ||
             _suppressRangePickup > 0 ||
             character is not Player player ||
-            !IsForagingTarget(source))
+            !sourceIsRangePickupTarget)
         {
             return;
         }
 
         float maxRange = GroundworkToolsDomain.ForagingPickupMaxRange;
-        if (maxRange <= 0)
+        if (maxRange <= 0f)
         {
             return;
         }
@@ -234,7 +271,7 @@ internal static class FarmingSkillSystem
         }
 
         Collider[] pickupHits = Physics.OverlapSphere(
-            source.transform.position,
+            origin,
             radius,
             GetPickupMask(),
             QueryTriggerInteraction.UseGlobal);
@@ -255,7 +292,7 @@ internal static class FarmingSkillSystem
                 Pickable? pickable = hit.GetComponentInParent<Pickable>();
                 if (pickable == null ||
                     !SeenPickables.Add(pickable) ||
-                    !IsForagingTarget(pickable) ||
+                    !IsRangePickupTarget(pickable) ||
                     !pickable.CanBePicked())
                 {
                     continue;
@@ -1268,32 +1305,36 @@ internal static class FarmingSkillSystem
 }
 
 [HarmonyPatch(typeof(Pickable), nameof(Pickable.Interact))]
-internal static class PickableInteractForagingPickupPatch
+internal static class PickableInteractFarmingPatch
 {
     [HarmonyPriority(Priority.Last)]
     private static void Prefix(
         Pickable __instance,
         Humanoid character,
-        out FarmingSkillSystem.PickableInteractFarmingState? __state)
+        out FarmingSkillSystem.PickableInteractPatchState __state)
     {
-        __state = FarmingSkillSystem.BeginFarmingInteract(__instance, character);
+        __state = FarmingSkillSystem.BeginPickableInteract(__instance, character);
     }
 
     [HarmonyPriority(Priority.First)]
     private static void Postfix(
         Pickable __instance,
         Humanoid character,
-        FarmingSkillSystem.PickableInteractFarmingState? __state)
+        FarmingSkillSystem.PickableInteractPatchState __state)
     {
-        __state?.Restore();
-        FarmingSkillSystem.TryPickupNearbyForagingTargets(__instance, character);
+        __state.FarmingState?.Restore();
+        FarmingSkillSystem.TryPickupNearbyFarmingTargets(
+            __instance,
+            character,
+            __state.RangePickupOrigin,
+            __state.RangePickupEligible);
     }
 
     private static Exception? Finalizer(
-        FarmingSkillSystem.PickableInteractFarmingState? __state,
+        FarmingSkillSystem.PickableInteractPatchState __state,
         Exception? __exception)
     {
-        __state?.Restore();
+        __state.FarmingState?.Restore();
         return __exception;
     }
 }

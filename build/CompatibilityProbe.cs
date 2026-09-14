@@ -24,6 +24,15 @@ public static class CompatibilityProbe
                 RuntimeHelpers.RunClassConstructor(mod.GetType(name, true).TypeHandle);
                 _checks++;
             }
+            Type tooltipText = mod.GetType("Groundwork.FarmingSkillTooltipText", true);
+            MethodInfo appendTooltip = tooltipText.GetMethod("Append", BindingFlags.Static | BindingFlags.NonPublic);
+            string foragingRange = (string)appendTooltip.Invoke(null, new object[] { "", false, false, true, false, false, false });
+            string cropRangeAndRespawn = (string)appendTooltip.Invoke(null, new object[] { "", false, false, true, true, true, false });
+            Assert(foragingRange.Contains("$groundwork_skill_farming_foraging_range") &&
+                   !foragingRange.Contains("$groundwork_skill_farming_foraging_crop_range"),
+                "Foraging-only range tooltip");
+            Assert(cropRangeAndRespawn.Contains("$groundwork_skill_farming_foraging_crop_both"),
+                "Crop-inclusive range tooltip");
             Type sync = mod.GetType("Groundwork.TerrainOperationSync", true);
             var write = (Action<TerrainOp.Settings, ZPackage>)Delegate.CreateDelegate(typeof(Action<TerrainOp.Settings, ZPackage>), sync.GetMethod("Write", BindingFlags.Static | BindingFlags.NonPublic));
             var read = (Func<TerrainOp.Settings, ZPackage, TerrainOp.Settings>)Delegate.CreateDelegate(typeof(Func<TerrainOp.Settings, ZPackage, TerrainOp.Settings>), sync.GetMethod("Read", BindingFlags.Static | BindingFlags.NonPublic));

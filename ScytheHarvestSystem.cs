@@ -151,8 +151,13 @@ internal static class ScytheHarvestSystem
         _reportedHarvestSearchSaturation = false;
     }
 
-    private static bool IsCultivatedPickable(Pickable pickable)
+    internal static bool IsCultivatedPickable(Pickable? pickable)
     {
+        if (pickable == null)
+        {
+            return false;
+        }
+
         ZNetScene? scene = ZNetScene.instance;
         if (scene == null)
         {

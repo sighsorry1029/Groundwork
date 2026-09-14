@@ -13,8 +13,10 @@ internal static class FarmingSkillTooltipText
     internal const string MassPlantingToken = "$groundwork_skill_farming_mass_planting";
     internal const string PlantGrowthToken = "$groundwork_skill_farming_plant_growth";
     internal const string ForagingRangeToken = "$groundwork_skill_farming_foraging_range";
+    internal const string ForagingAndCropRangeToken = "$groundwork_skill_farming_foraging_crop_range";
     internal const string ForagingRespawnToken = "$groundwork_skill_farming_foraging_respawn";
     internal const string ForagingBothToken = "$groundwork_skill_farming_foraging_both";
+    internal const string ForagingAndCropBothToken = "$groundwork_skill_farming_foraging_crop_both";
     internal const string BonusYieldToken = "$groundwork_skill_farming_bonus_yield";
     internal const string BeehiveCapacityToken = "$groundwork_skill_farming_beehive_capacity";
 
@@ -23,6 +25,7 @@ internal static class FarmingSkillTooltipText
         bool massPlantingEnabled,
         bool plantGrowthEnabled,
         bool foragingRangeEnabled,
+        bool foragingRangeIncludesCrops,
         bool foragingRespawnEnabled,
         bool beehiveCapacityEnabled)
     {
@@ -45,11 +48,15 @@ internal static class FarmingSkillTooltipText
 
         if (foragingRangeEnabled && foragingRespawnEnabled)
         {
-            lines.Add(ForagingBothToken);
+            lines.Add(foragingRangeIncludesCrops
+                ? ForagingAndCropBothToken
+                : ForagingBothToken);
         }
         else if (foragingRangeEnabled)
         {
-            lines.Add(ForagingRangeToken);
+            lines.Add(foragingRangeIncludesCrops
+                ? ForagingAndCropRangeToken
+                : ForagingRangeToken);
         }
         else if (foragingRespawnEnabled)
         {
@@ -141,6 +148,7 @@ internal static class FarmingSkillTooltipPatch
                 GroundworkToolsDomain.MassPlantingEnabled,
                 GroundworkToolsDomain.PlantGrowSpeedFactor > 1.001f,
                 GroundworkToolsDomain.ForagingPickupMaxRange > 0.001f,
+                GroundworkToolsDomain.FarmingRangeHarvestIncludesCrops,
                 GroundworkToolsDomain.ForagingRespawnSpeedFactor > 1.001f,
                 GroundworkToolsDomain.BeehiveCapacityFarmingLevelsPerBonusHoney > 0);
             if (!string.Equals(text, tooltip.m_text, StringComparison.Ordinal))

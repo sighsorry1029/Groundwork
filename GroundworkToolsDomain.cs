@@ -45,6 +45,9 @@ internal static class GroundworkToolsDomain
     internal static float ForagingPickupMaxRange =>
         Mathf.Max(0f, Farming.ForagingPickupMaxRange?.Value ?? 0f);
 
+    internal static bool FarmingRangeHarvestIncludesCrops =>
+        Farming.RangeHarvestTargets?.Value == GroundworkPlugin.FarmingRangeHarvestTargetMode.ForagingAndCrops;
+
     internal static float ForagingRespawnSpeedFactor =>
         Mathf.Max(0f, Farming.ForagingRespawnSpeedFactor?.Value ?? 0f);
 

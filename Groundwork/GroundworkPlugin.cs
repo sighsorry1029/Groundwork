@@ -67,6 +67,12 @@ public class GroundworkPlugin : BaseUnityPlugin
         Detailed
     }
 
+    public enum FarmingRangeHarvestTargetMode
+    {
+        ForagingOnly,
+        ForagingAndCrops
+    }
+
     public enum TerrainToolRangePreviewMode
     {
         Vanilla,
@@ -390,6 +396,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         internal ConfigEntry<float> MassPlantSkillGainFactor = null!;
         internal ConfigEntry<KeyboardShortcut> ToggleGridPlantingHotkey = null!;
         internal ConfigEntry<float> ForagingPickupMaxRange = null!;
+        internal ConfigEntry<FarmingRangeHarvestTargetMode> RangeHarvestTargets = null!;
         internal ConfigEntry<float> ForagingRespawnSpeedFactor = null!;
         internal ConfigEntry<float> PlantGrowSpeedFactor = null!;
         internal ConfigEntry<HoverHintMode> CropHoverHint = null!;
@@ -422,7 +429,8 @@ public class GroundworkPlugin : BaseUnityPlugin
             MassPlantSkillGainFactor = plugin.config(massPlantingGroup, "Mass Plant Skill Gain Factor", 0.5f, new ConfigDescription("Additional Farming skill gain for mass planting. Vanilla grants one build-skill raise for the click; this adds (extra planted crops * factor). 0 keeps only the vanilla one-click skill gain.", new AcceptableValueRange<float>(0f, 5f)), synchronizedSetting: true);
 
             PlantGrowSpeedFactor = plugin.config(plantsAndForagingGroup, "Plant Grow Speed Factor", 2.5f, new ConfigDescription("Grow speed factor at Farming skill 100 for placed Plant prefabs. Newly planted crops store the planter's Farming skill. 0 disables this feature.", new AcceptableValueRange<float>(0f, 10f)), synchronizedSetting: true);
-            ForagingPickupMaxRange = plugin.config(plantsAndForagingGroup, "Foraging Pickup Max Range", 5f, new ConfigDescription("Maximum nearby pickup range in meters at Farming skill 100 for foraging-style pickables. Targets need a positive base respawn time and must either drop edible food or be explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 0 disables this feature.", new AcceptableValueRange<float>(0f, 10f)), synchronizedSetting: true);
+            ForagingPickupMaxRange = plugin.config(plantsAndForagingGroup, "Foraging Pickup Max Range", 5f, new ConfigDescription("Maximum nearby pickup range in meters at Farming skill 100 for targets selected by Farming Range Harvest Targets. 0 disables this feature.", new AcceptableValueRange<float>(0f, 10f)), synchronizedSetting: true);
+            RangeHarvestTargets = plugin.config(plantsAndForagingGroup, "Farming Range Harvest Targets", FarmingRangeHarvestTargetMode.ForagingOnly, "Controls which Pickables the Farming-scaled nearby pickup affects. ForagingOnly includes positive-respawn targets that drop edible food or are explicitly enabled in BepInEx/config/Groundwork/pickables.yml. ForagingAndCrops also includes mature Pickables produced by Plant grown prefabs. Scythe harvesting is unaffected.", synchronizedSetting: true);
             ForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Foraging Respawn Speed Factor", 5f, new ConfigDescription("Respawn speed factor at Farming skill 100 for foraging-style pickables. Targets need a positive base respawn time and must either drop edible food or be explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 0 disables this feature.", new AcceptableValueRange<float>(0f, 20f)), synchronizedSetting: true);
             WetEnvironmentPlantGrowSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Plant Grow Speed Factor", 2f, new ConfigDescription("Plant growth speed factor while the current environment is wet. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
             WetEnvironmentForagingRespawnSpeedFactor = plugin.config(plantsAndForagingGroup, "Rain Foraging Respawn Speed Factor", 2f, new ConfigDescription("Foraging respawn speed factor while the current environment is wet. Applies to automatic edible targets and prefabs explicitly enabled in BepInEx/config/Groundwork/pickables.yml. 1 disables this bonus.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
