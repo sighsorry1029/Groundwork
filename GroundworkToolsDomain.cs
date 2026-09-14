@@ -48,6 +48,12 @@ internal static class GroundworkToolsDomain
     internal static bool FarmingRangeHarvestIncludesCrops =>
         Farming.RangeHarvestTargets?.Value == GroundworkPlugin.FarmingRangeHarvestTargetMode.ForagingAndCrops;
 
+    internal static bool NaturalPickableRemovalEnabled =>
+        Farming.NaturalPickableRemoval?.Value == GroundworkPlugin.Toggle.On;
+
+    internal static string NaturalPickableRemovalPrefabs =>
+        Farming.NaturalPickableRemovalPrefabs?.Value ?? "";
+
     internal static float ForagingRespawnSpeedFactor =>
         Mathf.Max(0f, Farming.ForagingRespawnSpeedFactor?.Value ?? 0f);
 

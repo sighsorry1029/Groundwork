@@ -33,6 +33,16 @@ public static class CompatibilityProbe
                 "Foraging-only range tooltip");
             Assert(cropRangeAndRespawn.Contains("$groundwork_skill_farming_foraging_crop_both"),
                 "Crop-inclusive range tooltip");
+            Type cultivation = mod.GetType("Groundwork.CultivationSystem", true);
+            MethodInfo normalizeRemovalPrefabs = cultivation.GetMethod(
+                "NormalizeNaturalRemovalPrefabList", BindingFlags.Static | BindingFlags.NonPublic);
+            string[] removalPrefabs = (string[])normalizeRemovalPrefabs.Invoke(null, new object[]
+            {
+                " Pickable_Branch,Pickable_Flint,pickable_branch, , Pickable_Thistle "
+            });
+            Assert(removalPrefabs.Length == 3 && removalPrefabs[0] == "Pickable_Branch" &&
+                   removalPrefabs[1] == "Pickable_Flint" && removalPrefabs[2] == "Pickable_Thistle",
+                "Natural removal prefab allowlist normalization");
             Type sync = mod.GetType("Groundwork.TerrainOperationSync", true);
             var write = (Action<TerrainOp.Settings, ZPackage>)Delegate.CreateDelegate(typeof(Action<TerrainOp.Settings, ZPackage>), sync.GetMethod("Write", BindingFlags.Static | BindingFlags.NonPublic));
             var read = (Func<TerrainOp.Settings, ZPackage, TerrainOp.Settings>)Delegate.CreateDelegate(typeof(Func<TerrainOp.Settings, ZPackage, TerrainOp.Settings>), sync.GetMethod("Read", BindingFlags.Static | BindingFlags.NonPublic));

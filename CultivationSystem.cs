@@ -20,11 +20,15 @@ internal static class CultivationSystem
     private static readonly FieldInfo? PickedTimeField = AccessTools.Field(typeof(Pickable), "m_pickedTime");
     private static readonly Dictionary<string, Entry> Rules = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Registration> Registrations = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> NaturalRemovalTargets = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ReportedWarnings = new(StringComparer.Ordinal);
     private static ZNetScene? _scene;
     private static ObjectDB? _objectDb;
     private static PieceTable? _cultivatorTable;
     private static bool _originalCanRemove;
+    private static bool _naturalRemovalConfigApplied;
+    private static bool _appliedNaturalRemovalEnabled;
+    private static string _appliedNaturalRemovalPrefabs = "";
 
     public sealed class Entry
     {
@@ -223,11 +227,28 @@ internal static class CultivationSystem
         }
     }
 
+    internal static void RefreshNaturalRemovalConfig()
+    {
+        bool enabled = GroundworkToolsDomain.NaturalPickableRemovalEnabled;
+        string prefabs = GroundworkToolsDomain.NaturalPickableRemovalPrefabs;
+        if (_naturalRemovalConfigApplied && enabled == _appliedNaturalRemovalEnabled &&
+            string.Equals(prefabs, _appliedNaturalRemovalPrefabs, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        SynchronizeRegistrations();
+    }
+
     internal static void Shutdown()
     {
         RestoreRegistrations(preservePlanted: false);
         Rules.Clear();
         ReportedWarnings.Clear();
+        NaturalRemovalTargets.Clear();
+        _naturalRemovalConfigApplied = false;
+        _appliedNaturalRemovalEnabled = false;
+        _appliedNaturalRemovalPrefabs = "";
         _scene = null;
         _objectDb = null;
     }
@@ -253,9 +274,12 @@ internal static class CultivationSystem
             _originalCanRemove = table.m_canRemovePieces;
         }
 
+        HashSet<string> desiredNaturalRemovalTargets = GetDesiredNaturalRemovalTargets();
         foreach (Registration registration in Registrations.Values.ToArray())
         {
-            if (!Rules.TryGetValue(registration.Name, out Entry? rule) || rule.Plantable != true)
+            bool planting = Rules.TryGetValue(registration.Name, out Entry? rule) && rule.Plantable == true;
+            bool removalOnly = !planting && desiredNaturalRemovalTargets.Contains(registration.Name);
+            if ((!planting && !removalOnly) || registration.AddedToPieceTable != planting)
             {
                 RestoreRegistration(registration, preservePlanted: true);
                 Registrations.Remove(registration.Name);
@@ -283,11 +307,39 @@ internal static class CultivationSystem
             }
         }
 
+        NaturalRemovalTargets.Clear();
+        foreach (string prefab in desiredNaturalRemovalTargets)
+        {
+            if (Registrations.ContainsKey(prefab))
+            {
+                NaturalRemovalTargets.Add(prefab);
+                continue;
+            }
+
+            try
+            {
+                if (ApplyNaturalRemovalTarget(prefab, table))
+                {
+                    NaturalRemovalTargets.Add(prefab);
+                }
+            }
+            catch (Exception ex)
+            {
+                RemoveRegistration(prefab);
+                WarnNaturalRemoval(prefab, ex.GetBaseException().Message);
+            }
+        }
+
         // Retain removal for saved planted objects even when their recipe is no longer configured.
         Pickable[] loadedPickables = Object.FindObjectsByType<Pickable>(FindObjectsSortMode.None);
         table.m_canRemovePieces = Rules.Values.Any(rule => rule.Plantable == true) ||
-                                  loadedPickables.Any(IsPlantedPickable) || _originalCanRemove;
+                                  NaturalRemovalTargets.Count > 0 || loadedPickables.Any(IsPlantedPickable) ||
+                                  _originalCanRemove;
         RefreshLoadedPieces(loadedPickables);
+        RefreshNaturalRemovalPieces(loadedPickables);
+        _appliedNaturalRemovalEnabled = GroundworkToolsDomain.NaturalPickableRemovalEnabled;
+        _appliedNaturalRemovalPrefabs = GroundworkToolsDomain.NaturalPickableRemovalPrefabs;
+        _naturalRemovalConfigApplied = true;
         Player? player = Player.m_localPlayer;
         if (player != null && Game.instance != null)
         {
@@ -330,13 +382,51 @@ internal static class CultivationSystem
 
             Piece? existing = prefab.GetComponent<Piece>();
             Piece piece = existing != null ? existing : prefab.AddComponent<Piece>();
-            registration = new Registration(rule.Prefab, prefab, piece, existing == null);
+            registration = new Registration(rule.Prefab, prefab, piece, existing == null, addedToPieceTable: true);
             Registrations.Add(rule.Prefab, registration);
             table.m_pieces.Add(prefab);
         }
 
         ConfigurePiece(registration.Piece, pickable, requirements,
             rule.CultivatedGroundOnly, FindPlacementEffects(table));
+        return true;
+    }
+
+    private static bool ApplyNaturalRemovalTarget(string name, PieceTable table)
+    {
+        if (Registrations.ContainsKey(name))
+        {
+            return true;
+        }
+
+        GameObject? prefab = FindPrefab(name);
+        Pickable? pickable = prefab != null ? prefab.GetComponent<Pickable>() : null;
+        if (prefab == null || pickable == null || prefab.GetComponent<Plant>() != null ||
+            prefab.GetComponent<ZNetView>() == null || prefab.GetComponent<WearNTear>() != null ||
+            prefab.GetComponent<Character>() != null)
+        {
+            WarnNaturalRemoval(name,
+                "removal requires a networked Pickable without Plant, WearNTear, or Character components");
+            return false;
+        }
+
+        if (pickable.m_respawnTimeMinutes <= 0f)
+        {
+            WarnNaturalRemoval(name, "removal is limited to Pickables with a repeating native respawn timer");
+            return false;
+        }
+
+        Piece? existing = prefab.GetComponent<Piece>();
+        if (existing != null)
+        {
+            WarnNaturalRemoval(name, "the prefab already has a Piece owned outside Groundwork cultivation");
+            return false;
+        }
+
+        Piece piece = prefab.AddComponent<Piece>();
+        Registration registration = new(name, prefab, piece, added: true, addedToPieceTable: false);
+        Registrations.Add(name, registration);
+        ConfigurePiece(piece, pickable, Array.Empty<Piece.Requirement>(), false, FindPlacementEffects(table));
         return true;
     }
 
@@ -359,12 +449,47 @@ internal static class CultivationSystem
             }
 
             EnsurePersistedPlantedPiece(pickable);
-            if (Registrations.TryGetValue(PrefabName(pickable), out Registration? registration))
+            if (Registrations.TryGetValue(PrefabName(pickable), out Registration? registration) &&
+                registration.AddedToPieceTable)
             {
                 Piece piece = pickable.GetComponent<Piece>();
                 ConfigurePiece(piece, pickable, registration.Piece.m_resources,
                     registration.Piece.m_cultivatedGroundOnly, registration.Piece.m_placeEffect);
             }
+        }
+    }
+
+    private static void RefreshNaturalRemovalPieces(IEnumerable<Pickable> loadedPickables)
+    {
+        foreach (Pickable pickable in loadedPickables)
+        {
+            string name = PrefabName(pickable);
+            if (!NaturalRemovalTargets.Contains(name) || IsPlantedPickable(pickable))
+            {
+                continue;
+            }
+
+            Registration? registration = null;
+            if (!Registrations.TryGetValue(name, out registration))
+            {
+                continue;
+            }
+
+            Piece? piece = pickable.GetComponent<Piece>();
+            bool added = piece == null;
+            piece ??= pickable.gameObject.AddComponent<Piece>();
+            if (piece.GetCreator() != 0L)
+            {
+                if (added)
+                {
+                    Object.DestroyImmediate(piece);
+                }
+
+                continue;
+            }
+
+            ConfigurePiece(piece, pickable, Array.Empty<Piece.Requirement>(), false,
+                registration.Piece.m_placeEffect);
         }
     }
 
@@ -454,6 +579,7 @@ internal static class CultivationSystem
         }
 
         Registrations.Clear();
+        NaturalRemovalTargets.Clear();
         if (_cultivatorTable != null)
         {
             _cultivatorTable.m_canRemovePieces = _originalCanRemove;
@@ -464,7 +590,7 @@ internal static class CultivationSystem
 
     private static void RestoreRegistration(Registration registration, bool preservePlanted)
     {
-        if (_cultivatorTable != null)
+        if (_cultivatorTable != null && registration.AddedToPieceTable)
         {
             _cultivatorTable.m_pieces.Remove(registration.Prefab);
         }
@@ -497,6 +623,20 @@ internal static class CultivationSystem
 
     private static bool IsFinitePositive(float value) => value > 0f && !float.IsNaN(value) && !float.IsInfinity(value);
 
+    internal static string[] NormalizeNaturalRemovalPrefabList(string prefabs) =>
+        (prefabs ?? "").Split(',')
+        .Select(name => name.Trim())
+        .Where(name => name.Length > 0)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    private static HashSet<string> GetDesiredNaturalRemovalTargets() =>
+        GroundworkToolsDomain.NaturalPickableRemovalEnabled
+            ? new HashSet<string>(
+                NormalizeNaturalRemovalPrefabList(GroundworkToolsDomain.NaturalPickableRemovalPrefabs),
+                StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     private static void ParseResource(string tuple, string prefab, out string item, out int amount)
     {
         string[] parts = (tuple ?? "").Split(',');
@@ -518,18 +658,46 @@ internal static class CultivationSystem
         }
     }
 
+    private static void WarnNaturalRemoval(string prefab, string reason)
+    {
+        string message = $"Skipping natural Pickable removal for '{prefab}': {reason}.";
+        if (ReportedWarnings.Add(message))
+        {
+            GroundworkPlugin.ModLogger.LogWarning(message);
+        }
+    }
+
     internal static bool IsManagedPiece(Piece piece) => piece != null &&
-        (Registrations.ContainsKey(PrefabName(piece)) || IsPlantedPickable(piece.GetComponent<Pickable>()));
+        (Registrations.ContainsKey(PrefabName(piece)) ||
+         IsPlantedPickable(piece.GetComponent<Pickable>()));
+
+    internal static bool CanRemoveNaturalPickable(Player player, Piece? piece)
+    {
+        if (piece == null)
+        {
+            return false;
+        }
+
+        Pickable? pickable = piece.GetComponent<Pickable>();
+        ZNetView? view = piece.GetComponent<ZNetView>();
+        return GroundworkToolsDomain.NaturalPickableRemovalEnabled && IsUsingCultivator(player) &&
+               pickable != null && view != null && view.IsValid() && !IsPlantedPickable(pickable) &&
+               piece.GetCreator() == 0L &&
+               NaturalRemovalTargets.Contains(PrefabName(piece));
+    }
 
     internal static bool RestrictsCultivatorRemoval(Player player) =>
-        !_originalCanRemove && _cultivatorTable != null &&
-        GameAccess.RightItem(player)?.m_shared?.m_buildPieces == _cultivatorTable;
+        !_originalCanRemove && IsUsingCultivator(player);
+
+    private static bool IsUsingCultivator(Player player) =>
+        _cultivatorTable != null && GameAccess.RightItem(player)?.m_shared?.m_buildPieces == _cultivatorTable;
 
     private sealed class Registration
     {
         internal readonly string Name;
         internal readonly GameObject Prefab;
         internal readonly Piece Piece;
+        internal readonly bool AddedToPieceTable;
         private readonly bool _added;
         private readonly string _name;
         private readonly string _description;
@@ -541,11 +709,12 @@ internal static class CultivationSystem
         private readonly CraftingStation _craftingStation;
         private readonly EffectList _placeEffect;
 
-        internal Registration(string name, GameObject prefab, Piece piece, bool added)
+        internal Registration(string name, GameObject prefab, Piece piece, bool added, bool addedToPieceTable)
         {
             Name = name;
             Prefab = prefab;
             Piece = piece;
+            AddedToPieceTable = addedToPieceTable;
             _added = added;
             _name = piece.m_name;
             _description = piece.m_description;
@@ -713,7 +882,8 @@ internal static class CultivationRemoveProtectionPatch
             return true;
         }
 
-        if (managed && CultivationSystem.IsPlantedPickable(piece.GetComponent<Pickable>()))
+        if (managed && (CultivationSystem.IsPlantedPickable(piece.GetComponent<Pickable>()) ||
+                        CultivationSystem.CanRemoveNaturalPickable(__instance, piece)))
         {
             return true;
         }
@@ -737,6 +907,7 @@ internal static class CultivationRemovalRayPatch
             return;
         }
 
+        CultivationSystem.RefreshNaturalRemovalConfig();
         int mask = (int)RemoveMask.GetValue(__instance);
         __state = mask;
         RemoveMask.SetValue(__instance, mask | LayerMask.GetMask("item"));

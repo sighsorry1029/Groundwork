@@ -44,6 +44,7 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
 - Mass planting processes slots nearest to the player first (horizontal distance), using the same order for preview and placement. Material, stamina, and durability limits select the nearest slots; invalid selected slots are skipped without extending the batch to farther slots.
 - Planted crops can grow faster based on the planter's Farming skill.
 - Mass planting can grant extra Farming skill.
+- `Natural Pickable Removal = On` lets the Cultivator permanently remove natural Pickables in the server-synced `Natural Pickable Removal Prefabs` allowlist. The default list is `Pickable_Branch`, `Pickable_Flint`, `Pickable_Dandelion`, `Pickable_Mushroom`, and `Pickable_Thistle`. Removal gives no items or harvest and still uses Valheim's normal distance, no-build, ward, and ownership checks.
 - Hovering Farming in the Skills tab shows its original description and enabled Groundwork Farming effects to the left of the Skills panel, aligned with the Farming row and kept within the screen bounds.
 
 ### Foraging
