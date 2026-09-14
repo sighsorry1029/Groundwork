@@ -45,6 +45,7 @@ Farming-scaled mass planting, grid planting, and foraging pollination. Plant in 
 - Planted crops can grow faster based on the planter's Farming skill.
 - Mass planting can grant extra Farming skill.
 - `Natural Pickable Removal = On` lets the Cultivator permanently remove natural Pickables in the server-synced `Natural Pickable Removal Prefabs` allowlist. The default list is `Pickable_Branch`, `Pickable_Flint`, `Pickable_Dandelion`, `Pickable_Mushroom`, and `Pickable_Thistle`. Removal gives no items or harvest and still uses Valheim's normal distance, no-build, ward, and ownership checks.
+- `Scythe Handle Required Global Key` controls when the Bog Witch sells `ScytheHandle`. Vanilla uses `defeated_dragon`; Groundwork defaults to `defeated_bonemass`. See YouAreNotWorthy for per-player progression and discovery of additional global keys.
 - Hovering Farming in the Skills tab shows its original description and enabled Groundwork Farming effects to the left of the Skills panel, aligned with the Farming row and kept within the screen bounds.
 
 ### Foraging

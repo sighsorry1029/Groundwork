@@ -185,6 +185,69 @@ internal static class ScytheToolCompatSystem
     }
 }
 
+internal static class ScytheHandleUnlockSystem
+{
+    private const string ScytheHandlePrefabName = "ScytheHandle";
+    private static readonly Dictionary<Trader.TradeItem, TradeItemState> ModifiedItems = new();
+
+    internal static void Apply(Trader trader)
+    {
+        if (trader?.m_items == null)
+        {
+            return;
+        }
+
+        string requiredGlobalKey = GroundworkToolsDomain.ScytheHandleRequiredGlobalKey;
+        foreach (Trader.TradeItem? item in trader.m_items)
+        {
+            if (item?.m_prefab == null ||
+                !string.Equals(
+                    Utils.GetPrefabName(item.m_prefab.gameObject),
+                    ScytheHandlePrefabName,
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!ModifiedItems.TryGetValue(item, out TradeItemState? state))
+            {
+                state = new TradeItemState(item.m_requiredGlobalKey);
+                ModifiedItems.Add(item, state);
+            }
+
+            state.AppliedKey = requiredGlobalKey;
+            item.m_requiredGlobalKey = requiredGlobalKey;
+        }
+    }
+
+    internal static void Shutdown()
+    {
+        foreach (KeyValuePair<Trader.TradeItem, TradeItemState> entry in ModifiedItems)
+        {
+            if (string.Equals(
+                    entry.Key.m_requiredGlobalKey,
+                    entry.Value.AppliedKey,
+                    StringComparison.Ordinal))
+            {
+                entry.Key.m_requiredGlobalKey = entry.Value.OriginalKey;
+            }
+        }
+
+        ModifiedItems.Clear();
+    }
+
+    private sealed class TradeItemState
+    {
+        internal TradeItemState(string? originalKey)
+        {
+            OriginalKey = originalKey;
+        }
+
+        internal string? OriginalKey { get; }
+        internal string AppliedKey { get; set; } = "";
+    }
+}
+
 [HarmonyPatch(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.IsWeapon))]
 internal static class ItemDataIsWeaponScytheToolCompatPatch
 {
@@ -194,5 +257,14 @@ internal static class ItemDataIsWeaponScytheToolCompatPatch
         {
             __result = true;
         }
+    }
+}
+
+[HarmonyPatch(typeof(Trader), nameof(Trader.GetAvailableItems))]
+internal static class TraderGetAvailableItemsScytheHandleUnlockPatch
+{
+    private static void Prefix(Trader __instance)
+    {
+        ScytheHandleUnlockSystem.Apply(__instance);
     }
 }

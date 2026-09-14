@@ -54,6 +54,15 @@ internal static class GroundworkToolsDomain
     internal static string NaturalPickableRemovalPrefabs =>
         Farming.NaturalPickableRemovalPrefabs?.Value ?? "";
 
+    internal static string ScytheHandleRequiredGlobalKey
+    {
+        get
+        {
+            string configured = Farming.ScytheHandleRequiredGlobalKey?.Value?.Trim() ?? "";
+            return configured.Length > 0 ? configured : "defeated_bonemass";
+        }
+    }
+
     internal static float ForagingRespawnSpeedFactor =>
         Mathf.Max(0f, Farming.ForagingRespawnSpeedFactor?.Value ?? 0f);
 

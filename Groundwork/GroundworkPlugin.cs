@@ -129,6 +129,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         RunShutdownStep(nameof(ZenBeehiveCompatSystem), ZenBeehiveCompatSystem.Shutdown);
         RunShutdownStep(nameof(BeehivePollinationSystem), BeehivePollinationSystem.Shutdown);
         RunShutdownStep(nameof(ScytheHarvestSystem), ScytheHarvestSystem.Shutdown);
+        RunShutdownStep(nameof(ScytheHandleUnlockSystem), ScytheHandleUnlockSystem.Shutdown);
         RunShutdownStep(nameof(ScytheToolCompatSystem), ScytheToolCompatSystem.Shutdown);
         RunShutdownStep(nameof(CameraZoomInputSuppressionSystem), CameraZoomInputSuppressionSystem.Shutdown);
         RunShutdownStep(nameof(GroundworkInputIcons), GroundworkInputIcons.Shutdown);
@@ -399,6 +400,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         internal ConfigEntry<FarmingRangeHarvestTargetMode> RangeHarvestTargets = null!;
         internal ConfigEntry<Toggle> NaturalPickableRemoval = null!;
         internal ConfigEntry<string> NaturalPickableRemovalPrefabs = null!;
+        internal ConfigEntry<string> ScytheHandleRequiredGlobalKey = null!;
         internal ConfigEntry<float> ForagingRespawnSpeedFactor = null!;
         internal ConfigEntry<float> PlantGrowSpeedFactor = null!;
         internal ConfigEntry<HoverHintMode> CropHoverHint = null!;
@@ -424,6 +426,7 @@ public class GroundworkPlugin : BaseUnityPlugin
             const string plantsAndForagingGroup = "4 - Plants and Foraging";
             const string beehivesGroup = "5 - Beehives";
             const string pollinationGroup = "6 - Pollination";
+            const string scytheGroup = "7 - Scythe";
 
             MassPlantingEnabled = plugin.config(massPlantingGroup, "Mass Planting Enabled", Toggle.On, "If on, mass planting unlocks by Farming level: 0-19 off, 20-39 plants 5, 40-59 plants 10, 60-79 plants 15, 80-99 plants 20, and 100 plants 25. Grid planting is always available.", synchronizedSetting: true);
             ToggleGridPlantingHotkey = plugin.config(massPlantingGroup, "Toggle Grid Planting Hotkey", new KeyboardShortcut(KeyCode.G), new ConfigDescription("Local hotkey for toggling world-grid snapping while a plant piece is selected.", new AcceptableShortcuts()), synchronizedSetting: false);
@@ -453,6 +456,8 @@ public class GroundworkPlugin : BaseUnityPlugin
             BeehivePollinationPlantGrowSpeedFactor = plugin.config(pollinationGroup, "Beehive Pollination Plant Grow Speed Factor", 2f, new ConfigDescription("Plant growth speed factor near an empty active beehive. The bonus fades to x1 as the beehive fills with honey.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
             BeehivePollinationForagingRespawnSpeedFactor = plugin.config(pollinationGroup, "Beehive Pollination Foraging Respawn Speed Factor", 4f, new ConfigDescription("Foraging respawn speed factor near an empty active beehive. The bonus fades to x1 as the beehive fills with honey.", new AcceptableValueRange<float>(1f, 10f)), synchronizedSetting: true);
             BeehivePollinationHoneySpeedBonusPercentPerTarget = plugin.config(pollinationGroup, "Beehive Pollination Honey Speed Bonus Percent Per Target", 10f, new ConfigDescription("Additional honey production speed percent per counted pollination target. For example, 10 means each target adds +10%, so 24 targets gives Honey rate x3.4.", new AcceptableValueRange<float>(0f, 100f)), synchronizedSetting: true);
+
+            ScytheHandleRequiredGlobalKey = plugin.config(scytheGroup, "Scythe Handle Required Global Key", "defeated_bonemass", "Global key required for the Bog Witch to sell ScytheHandle. Vanilla uses defeated_dragon; Groundwork defaults to defeated_bonemass. For per-player progression and discovery of additional global keys, see YouAreNotWorthy.", synchronizedSetting: true);
         }
     }
 
