@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.13
+
+- Fixed dedicated-server harvest bookkeeping using an uninitialized remote `Player.Skills` instance, which could store Farming level 0 and emit a misleading Farming level 1 message even though the harvesting character retained their real level. Pickable and beehive requests now carry the acting character's Farming level and bind it to that character's current network owner.
+- Added owner-authoritative request revisions and bounded honey-harvest acknowledgements so duplicate, delayed, stale, wrong-character, and wrong-owner requests cannot overwrite Farming snapshots, award honey experience twice, or repeat item creation. Existing low snapshots are replaced by the next successful attributable harvest; character skill saves and existing configuration remain unchanged.
+- Prevented ZenBeehive compatibility bookkeeping from attributing a honey decrease across a hive ownership transition to the observing local player.
+
 ## 1.1.12
 
 - Added the server-synced `Farming Range Harvest Targets` setting. The default `ForagingOnly` behavior is unchanged, while `ForagingAndCrops` extends Farming-scaled nearby harvesting to mature crops produced by Plant prefabs.
