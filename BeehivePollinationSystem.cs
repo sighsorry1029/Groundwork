@@ -736,23 +736,10 @@ internal static class BeehivePollinationSystem
         }
     }
 
-    internal static void StoreTendedFarmingLevel(Beehive beehive, long sender)
-    {
-        StoreTendedFarmingLevel(beehive, ResolveSenderFarmingLevel(sender));
-    }
-
-    internal static void RaiseFarmingSkillForHarvest(long sender, int harvestedHoney)
-    {
-        Player? player = ResolveSenderPlayer(sender);
-        if (player != null)
-        {
-            RaiseFarmingSkillForHarvest(player, harvestedHoney);
-        }
-    }
-
     internal static void RegisterBeehiveHarvest(Beehive beehive, Player player, int harvestedHoney)
     {
-        if (beehive == null || player == null || harvestedHoney <= 0)
+        if (beehive == null || player == null || player != Player.m_localPlayer || harvestedHoney <= 0 ||
+            GetZdo(beehive) == null || !GameAccess.BeehiveView(beehive).IsOwner())
         {
             return;
         }
@@ -766,7 +753,7 @@ internal static class BeehivePollinationSystem
         StoreTendedFarmingLevel(beehive, Mathf.Clamp(player.GetSkillLevel(Skills.SkillType.Farming), 0f, 100f));
     }
 
-    private static void StoreTendedFarmingLevel(Beehive beehive, float farmingLevel)
+    internal static void StoreTendedFarmingLevel(Beehive beehive, float farmingLevel)
     {
         ZDO? zdo = GetZdo(beehive);
         if (zdo == null || !GameAccess.BeehiveView(beehive).IsOwner())
@@ -777,10 +764,10 @@ internal static class BeehivePollinationSystem
         zdo.Set(TendedFarmingLevelKey, Mathf.Clamp(farmingLevel, 0f, 100f));
     }
 
-    private static void RaiseFarmingSkillForHarvest(Player player, int harvestedHoney)
+    internal static void RaiseFarmingSkillForHarvest(Player player, int harvestedHoney)
     {
         float skillGainPerHoney = GroundworkToolsDomain.BeehiveFarmingSkillGainPerHoney;
-        if (player == null || harvestedHoney <= 0 || skillGainPerHoney <= 0f)
+        if (player == null || player != Player.m_localPlayer || harvestedHoney <= 0 || skillGainPerHoney <= 0f)
         {
             return;
         }
@@ -792,7 +779,7 @@ internal static class BeehivePollinationSystem
     {
         Player? player = PlayerPlacePieceGroundworkPatch.BeehiveBuilder;
         ZDO? zdo = GetZdo(beehive);
-        if (player == null ||
+        if (player == null || player != Player.m_localPlayer ||
             zdo == null ||
             !GameAccess.BeehiveView(beehive).IsOwner() ||
             GroundworkToolsDomain.BeehiveCapacityFarmingLevelsPerBonusHoney <= 0 ||
@@ -1790,33 +1777,6 @@ internal static class BeehivePollinationSystem
         return Mathf.Max(0, Mathf.FloorToInt(GetTendedFarmingLevel(beehive) / levelsPerBonusHoney));
     }
 
-    private static float ResolveSenderFarmingLevel(long sender)
-    {
-        Player? senderPlayer = ResolveSenderPlayer(sender);
-        if (senderPlayer != null)
-        {
-            return Mathf.Clamp(senderPlayer.GetSkillLevel(Skills.SkillType.Farming), 0f, 100f);
-        }
-
-        Player? localPlayer = Player.m_localPlayer;
-        return localPlayer != null ? Mathf.Clamp(localPlayer.GetSkillLevel(Skills.SkillType.Farming), 0f, 100f) : 0f;
-    }
-
-    private static Player? ResolveSenderPlayer(long sender)
-    {
-        foreach (Player player in Player.GetAllPlayers())
-        {
-            ZNetView? nview = GameAccess.CharacterView(player);
-            ZDO? zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
-            if (zdo != null && zdo.m_uid.UserID == sender)
-            {
-                return player;
-            }
-        }
-
-        return null;
-    }
-
     private static int GetHoneyLevel(Beehive beehive)
     {
         return GetZdo(beehive)?.GetInt(ZDOVars.s_level) ?? 0;
@@ -2044,8 +2004,7 @@ internal static class BeehiveRpcExtractPollinationPatch
             return;
         }
 
-        BeehivePollinationSystem.StoreTendedFarmingLevel(__instance, caller);
-        BeehivePollinationSystem.RaiseFarmingSkillForHarvest(caller, harvestedHoney);
+        HarvestSkillSync.HoneySucceeded(__instance, caller, harvestedHoney);
     }
 }
 

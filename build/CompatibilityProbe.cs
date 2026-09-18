@@ -76,6 +76,7 @@ public static class CompatibilityProbe
             Assert(ReferenceEquals(read(original, same), original), "Unchanged values avoid cloning");
             var framed = new ZPackage(); framed.Write(123); write(original, framed); framed.SetPos(4);
             Assert(ReferenceEquals(read(original, framed), original) && framed.GetPos() == framed.Size(), "Extension after vanilla packet prefix");
+            HarvestSkillProbe.Run(mod, Assert);
             System.Console.WriteLine(_checks + " original-DLL / actual Unity Mono managed checks passed.");
             System.Console.WriteLine("No Unity scene, socket, world, or plugin Awake was executed.");
             return 0;

@@ -9,6 +9,7 @@ internal static class ZenBeehiveCompatSystem
     internal const string ZenBeehiveGuid = "ZenDragon.ZenBeehive";
     private static Beehive? _openBeehive;
     private static int _lastHoneyLevel;
+    private static bool _wasOwner;
 
     private static bool IsLoaded => Chainloader.PluginInfos.ContainsKey(ZenBeehiveGuid);
 
@@ -29,6 +30,7 @@ internal static class ZenBeehiveCompatSystem
 
         _openBeehive = beehive;
         _lastHoneyLevel = GetHoneyLevel(beehive);
+        _wasOwner = IsValid(beehive) && GameAccess.BeehiveView(beehive).IsOwner();
     }
 
     internal static void EndBeehiveContainer()
@@ -36,6 +38,7 @@ internal static class ZenBeehiveCompatSystem
         CheckForHarvest();
         _openBeehive = null;
         _lastHoneyLevel = 0;
+        _wasOwner = false;
     }
 
     internal static void CheckForHarvest()
@@ -45,24 +48,30 @@ internal static class ZenBeehiveCompatSystem
         {
             _openBeehive = null;
             _lastHoneyLevel = 0;
+            _wasOwner = false;
             return;
         }
 
         int currentHoneyLevel = GetHoneyLevel(beehive);
         int harvestedHoney = _lastHoneyLevel - currentHoneyLevel;
+        bool isOwner = GameAccess.BeehiveView(beehive).IsOwner();
         Player? player = Player.m_localPlayer;
-        if (harvestedHoney > 0 && player != null)
+        // Container access transfers ownership through vanilla's handshake. Observing another
+        // owner's ZDO decrease does not prove this client harvested that honey.
+        if (harvestedHoney > 0 && player != null && _wasOwner && isOwner)
         {
             BeehivePollinationSystem.RegisterBeehiveHarvest(beehive, player, harvestedHoney);
         }
 
         _lastHoneyLevel = currentHoneyLevel;
+        _wasOwner = isOwner;
     }
 
     internal static void Shutdown()
     {
         _openBeehive = null;
         _lastHoneyLevel = 0;
+        _wasOwner = false;
     }
 
     internal static void RefreshContainerAmountText(InventoryGrid? grid)

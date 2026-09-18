@@ -126,6 +126,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         RunShutdownStep(nameof(TerrainDigFloatingTextSystem), TerrainDigFloatingTextSystem.Clear);
         RunShutdownStep(nameof(PickableRespawnHoverSystem), PickableRespawnHoverSystem.Shutdown);
         RunShutdownStep(nameof(FarmingSkillSystem), FarmingSkillSystem.Shutdown);
+        RunShutdownStep(nameof(HarvestSkillSync), HarvestSkillSync.Shutdown);
         RunShutdownStep(nameof(ZenBeehiveCompatSystem), ZenBeehiveCompatSystem.Shutdown);
         RunShutdownStep(nameof(BeehivePollinationSystem), BeehivePollinationSystem.Shutdown);
         RunShutdownStep(nameof(ScytheHarvestSystem), ScytheHarvestSystem.Shutdown);

@@ -314,7 +314,7 @@ internal static class FarmingSkillSystem
         return new RangePickupSuppression();
     }
 
-    internal static void RememberForagingPickerSkill(Pickable pickable, long sender)
+    internal static void RememberForagingPickerSkill(Pickable pickable, float skillFactor)
     {
         if (!GroundworkToolsDomain.ForagingFeatureEnabled ||
             !IsForagingTarget(pickable) ||
@@ -323,32 +323,15 @@ internal static class FarmingSkillSystem
             return;
         }
 
-        zdo!.Set(ForagingPickerSkillKey, ResolveSenderFarmingSkill(sender));
+        zdo!.Set(ForagingPickerSkillKey, Mathf.Clamp01(skillFactor));
     }
 
     internal static void RememberCultivationPlanter(Pickable pickable, Player player)
     {
-        if (TryGetPickableZdo(pickable, requireOwner: true, out ZDO? zdo))
+        if (player != null && player == Player.m_localPlayer && TryGetPickableZdo(pickable, requireOwner: true, out ZDO? zdo))
         {
             zdo!.Set(ForagingPickerSkillKey, player.GetSkillFactor(Skills.SkillType.Farming));
         }
-    }
-
-    internal static void EnsureForagingPickerSkill(Pickable pickable, bool picked)
-    {
-        if (!picked ||
-            !IsForagingTarget(pickable) ||
-            !TryGetPickableZdo(pickable, requireOwner: true, out ZDO? zdo))
-        {
-            return;
-        }
-
-        if (zdo!.GetFloat(ForagingPickerSkillKey, -1f) >= 0f)
-        {
-            return;
-        }
-
-        zdo.Set(ForagingPickerSkillKey, ResolveLocalFarmingSkill());
     }
 
     internal static bool TryGetPickableRespawnTiming(Pickable pickable, out PickableRespawnTiming timing)
@@ -700,7 +683,7 @@ internal static class FarmingSkillSystem
     internal static void TryStorePlanterSkill(Plant plant)
     {
         Player? player = PlayerPlacePieceGroundworkPatch.PlantPlanter;
-        if (player == null ||
+        if (player == null || player != Player.m_localPlayer ||
             !GroundworkToolsDomain.PlantGrowFeatureEnabled ||
             !TryGetPlantZdo(plant, requireOwner: true, out ZDO? zdo))
         {
@@ -1100,32 +1083,11 @@ internal static class FarmingSkillSystem
         return effectList != null && effectList.HasEffects();
     }
 
-    private static float ResolveSenderFarmingSkill(long sender)
-    {
-        foreach (Player player in Player.GetAllPlayers())
-        {
-            ZNetView? nview = GameAccess.CharacterView(player);
-            ZDO? zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
-            if (zdo != null && zdo.m_uid.UserID == sender)
-            {
-                return player.GetSkillFactor(Skills.SkillType.Farming);
-            }
-        }
-
-        return ResolveLocalFarmingSkill();
-    }
-
-    private static float ResolveLocalFarmingSkill()
-    {
-        Player? player = Player.m_localPlayer;
-        return player != null ? player.GetSkillFactor(Skills.SkillType.Farming) : 0f;
-    }
-
     private static float ResolveForagingPickerSkill(Pickable pickable)
     {
         return TryGetPickableZdo(pickable, requireOwner: false, out ZDO? zdo)
-            ? Mathf.Clamp01(zdo!.GetFloat(ForagingPickerSkillKey, ResolveLocalFarmingSkill()))
-            : ResolveLocalFarmingSkill();
+            ? Mathf.Clamp01(zdo!.GetFloat(ForagingPickerSkillKey, 0f))
+            : 0f;
     }
 
     private static float ResolveSkillSpeedMultiplier(float speedFactor, float skillFactor)
@@ -1342,9 +1304,18 @@ internal static class PickableInteractFarmingPatch
 [HarmonyPatch(typeof(Pickable), "RPC_Pick")]
 internal static class PickableRpcPickForagingSkillPatch
 {
-    private static void Prefix(Pickable __instance, long sender)
+    private static void Prefix(Pickable __instance, out bool __state)
     {
-        FarmingSkillSystem.RememberForagingPickerSkill(__instance, sender);
+        ZNetView? view = GameAccess.PickableView(__instance);
+        __state = view != null && view.IsValid() && view.IsOwner() && !__instance.GetPicked();
+    }
+
+    private static void Postfix(Pickable __instance, long sender, bool __state, bool __runOriginal)
+    {
+        if (__runOriginal && __state && __instance != null && __instance.GetPicked())
+        {
+            HarvestSkillSync.PickSucceeded(__instance, sender);
+        }
     }
 }
 
@@ -1354,7 +1325,6 @@ internal static class PickableSetPickedForagingSkillPatch
     private static void Postfix(Pickable __instance, bool picked)
     {
         PickableRespawnHoverSystem.RefreshHoverProxy(__instance);
-        FarmingSkillSystem.EnsureForagingPickerSkill(__instance, picked);
         FarmingSkillSystem.ResetForagingDynamicProgress(__instance, picked);
     }
 }
