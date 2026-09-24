@@ -712,11 +712,7 @@ internal static class BeehivePollinationSystem
         AppendCurrentHoneyRateLine(
             ref hoverText,
             GetNightProductionMultiplier(unloadedCatchup: false),
-            "groundwork_beehive_night_rate",
-            "Night: {0}",
-            EnvironmentEffectSystem.GetBeehiveRainHoneyRate(unloadedCatchup: false),
-            "groundwork_beehive_rain_rate",
-            "Rain: {0}");
+            EnvironmentEffectSystem.GetBeehiveRainHoneyRate(unloadedCatchup: false));
 
         string nextHoney = FormatNextHoney(beehive, honeyLevel, maxHoney, out float honeyRateMultiplier);
         string nextHoneyLine = honeyRateMultiplier > 0.001f
@@ -1587,29 +1583,26 @@ internal static class BeehivePollinationSystem
     private static void AppendCurrentHoneyRateLine(
         ref string hoverText,
         float nightMultiplier,
-        string nightToken,
-        string nightFallback,
-        float rainMultiplier,
-        string rainToken,
-        string rainFallback)
+        float rainMultiplier)
     {
-        List<string> parts = [];
+        string? line = null;
         if (nightMultiplier < 0.999f)
         {
-            parts.Add(GroundworkLocalization.Format(nightToken, nightFallback, FormatMultiplier(nightMultiplier)));
+            line = GroundworkLocalization.Format(
+                "groundwork_beehive_night_rate", "Night: {0}", FormatMultiplier(nightMultiplier));
         }
 
         if (rainMultiplier < 0.999f)
         {
-            parts.Add(GroundworkLocalization.Format(rainToken, rainFallback, FormatMultiplier(rainMultiplier)));
+            string rain = GroundworkLocalization.Format(
+                "groundwork_beehive_rain_rate", "Rain: {0}", FormatMultiplier(rainMultiplier));
+            line = line == null ? rain : line + "  " + rain;
         }
 
-        if (parts.Count == 0)
+        if (line != null)
         {
-            return;
+            AppendLine(ref hoverText, Colorize(line));
         }
-
-        AppendLine(ref hoverText, Colorize(string.Join("  ", parts)));
     }
 
     private static void AppendHoverExplanation(Beehive beehive, ref string hoverText)
