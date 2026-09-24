@@ -42,7 +42,6 @@ internal static class TerrainToolRangeSystem
     private static readonly Dictionary<string, float> CurrentRanges = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<Player, PendingPlacementCost> PendingPlacementCosts = new();
     private static readonly Dictionary<Player, ActivePlacementContext> ActivePlacements = new();
-    private static readonly Dictionary<Player, ActiveGridPlacementState> ActiveGridPlacementStates = new();
     private static readonly HashSet<string> ReportedWarnings = new(StringComparer.OrdinalIgnoreCase);
     private static TerrainToolRule? ActiveRangeRule;
     private static GroundworkPlugin.TerrainToolRangePreviewMode? ActivePreviewMode;
@@ -322,21 +321,15 @@ internal static class TerrainToolRangeSystem
         }
 
         ActivePlacements.Remove(player);
-        ActiveGridPlacementStates.Remove(player);
         if (piece == null || !RulesByPiece.TryGetValue(piece, out TerrainToolRule rule))
         {
             return;
         }
 
-        ActivePlacements[player] = new ActivePlacementContext(rule, GameAccess.RightItem(player));
-        if (TryCreateActiveGridPlacementState(rule, out ActiveGridPlacementState? gridPlacementState))
-        {
-            ActiveGridPlacementStates[player] = gridPlacementState;
-        }
-        else
-        {
-            ActiveGridPlacementStates.Remove(player);
-        }
+        ActivePlacements[player] = new ActivePlacementContext(
+            rule,
+            GameAccess.RightItem(player),
+            CreateActiveGridPlacementState(rule));
     }
 
     internal static void EndTryPlacePiece(Player player, Piece piece, bool placed)
@@ -358,7 +351,6 @@ internal static class TerrainToolRangeSystem
         }
 
         ActivePlacements.Remove(player);
-        ActiveGridPlacementStates.Remove(player);
     }
 
     internal static TerrainOpSettingsState? PrepareTerrainOp(TerrainOp terrainOp)
@@ -374,7 +366,7 @@ internal static class TerrainToolRangeSystem
         TerrainOpSettingsState state = TerrainOpSettingsState.Capture(terrainOp.m_settings);
         ApplyTerrainOpOverrides(terrainOp.m_settings, rule);
         ApplyRangeToSettings(terrainOp.m_settings, GetCurrentRange(rule));
-        ApplyCapturedGridPreviewPosition(Player.m_localPlayer, terrainOp);
+        ApplyCapturedGridPreviewPosition(placement.GridPlacementState, terrainOp);
         return state;
     }
 
@@ -592,7 +584,6 @@ internal static class TerrainToolRangeSystem
         RuleConfigsByTool.Clear();
         PendingPlacementCosts.Clear();
         ActivePlacements.Clear();
-        ActiveGridPlacementStates.Clear();
         LastGridPreviewState = null;
         ActiveRangeRule = null;
         ActivePreviewMode = null;
@@ -1600,27 +1591,24 @@ internal static class TerrainToolRangeSystem
             : null;
     }
 
-    private static bool TryCreateActiveGridPlacementState(TerrainToolRule rule, [NotNullWhen(true)] out ActiveGridPlacementState? state)
+    private static ActiveGridPlacementState? CreateActiveGridPlacementState(TerrainToolRule rule)
     {
-        state = null;
         if (rule == null ||
             GetCurrentPreviewMode() != GroundworkPlugin.TerrainToolRangePreviewMode.Grid ||
             LastGridPreviewState == null ||
             !string.Equals(LastGridPreviewState.RuleId, rule.Id, StringComparison.Ordinal) ||
             LastGridPreviewState.Operations.Count == 0)
         {
-            return false;
+            return null;
         }
 
-        state = new ActiveGridPlacementState(LastGridPreviewState);
-        return true;
+        return new ActiveGridPlacementState(LastGridPreviewState);
     }
 
-    private static void ApplyCapturedGridPreviewPosition(Player? player, TerrainOp terrainOp)
+    private static void ApplyCapturedGridPreviewPosition(ActiveGridPlacementState? state, TerrainOp terrainOp)
     {
-        if (player == null ||
+        if (state == null ||
             terrainOp == null ||
-            !ActiveGridPlacementStates.TryGetValue(player, out ActiveGridPlacementState? state) ||
             !TryResolveRepresentativeOperation(
                 terrainOp,
                 out _,
@@ -2745,10 +2733,12 @@ internal static class TerrainToolRangeSystem
 
     private readonly struct ActivePlacementContext(
         TerrainToolRule rule,
-        ItemDrop.ItemData? expectedTool)
+        ItemDrop.ItemData? expectedTool,
+        ActiveGridPlacementState? gridPlacementState)
     {
         internal readonly TerrainToolRule Rule = rule;
         internal readonly ItemDrop.ItemData? ExpectedTool = expectedTool;
+        internal readonly ActiveGridPlacementState? GridPlacementState = gridPlacementState;
     }
 
     private sealed class GridPreviewState

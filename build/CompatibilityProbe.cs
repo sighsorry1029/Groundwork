@@ -76,6 +76,7 @@ public static class CompatibilityProbe
             Assert(ReferenceEquals(read(original, same), original), "Unchanged values avoid cloning");
             var framed = new ZPackage(); framed.Write(123); write(original, framed); framed.SetPos(4);
             Assert(ReferenceEquals(read(original, framed), original) && framed.GetPos() == framed.Size(), "Extension after vanilla packet prefix");
+            VerifyGridPlacementSnapshot(mod);
             HarvestSkillProbe.Run(mod, Assert);
             System.Console.WriteLine(_checks + " original-DLL / actual Unity Mono managed checks passed.");
             System.Console.WriteLine("No Unity scene, socket, world, or plugin Awake was executed.");
@@ -86,5 +87,41 @@ public static class CompatibilityProbe
             System.Console.Error.WriteLine(error);
             return 1;
         }
+    }
+
+    private static void VerifyGridPlacementSnapshot(Assembly mod)
+    {
+        // Exercise managed click state without initializing the outer system's Unity shaders.
+        const BindingFlags instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        Type terrain = mod.GetType("Groundwork.TerrainToolRangeSystem", true);
+        Type operation = terrain.GetNestedType("GridPreviewOperationState", BindingFlags.NonPublic);
+        Type preview = terrain.GetNestedType("GridPreviewState", BindingFlags.NonPublic);
+        Type click = terrain.GetNestedType("ActiveGridPlacementState", BindingFlags.NonPublic);
+        object Construct(Type type, params object[] values) => Activator.CreateInstance(type, instance, null, values, null);
+        var firstPosition = new UnityEngine.Vector3(1, 2, 3);
+        var secondPosition = new UnityEngine.Vector3(4, 5, 6);
+        Array operations = Array.CreateInstance(operation, 2);
+        operations.SetValue(Construct(operation, "first", firstPosition), 0);
+        operations.SetValue(Construct(operation, "second", secondPosition), 1);
+        object snapshot = Construct(preview, "Hoe:raise_v2", operations);
+        operations.SetValue(Construct(operation, "changed", new UnityEngine.Vector3(99, 99, 99)), 0);
+        object firstClick = Construct(click, snapshot);
+        object nextClick = Construct(click, snapshot);
+        MethodInfo consume = click.GetMethod("TryConsume", instance);
+        bool Consume(object state, string path, out UnityEngine.Vector3 position)
+        {
+            object[] args = { path, null };
+            bool result = (bool)consume.Invoke(state, args);
+            position = (UnityEngine.Vector3)args[1];
+            return result;
+        }
+
+        Assert(!Consume(firstClick, "unknown", out _), "Ambiguous grid operations must not use fallback");
+        Assert(Consume(firstClick, "first", out var actual) && actual.Equals(firstPosition), "Grid snapshot preserves the preview position");
+        Assert(Consume(nextClick, "first", out actual) && actual.Equals(firstPosition), "Each click consumes its own snapshot state");
+        Assert(Consume(firstClick, "second", out actual) && actual.Equals(secondPosition), "Grid operation path match");
+        Assert(!Consume(firstClick, "second", out _), "Consumed grid operations cannot be reused");
+        Assert(Consume(nextClick, "unknown", out actual) && actual.Equals(secondPosition), "A sole remaining grid operation is the fallback");
+        Assert(!Consume(nextClick, "unknown", out _), "Grid fallback is consumed only once");
     }
 }
