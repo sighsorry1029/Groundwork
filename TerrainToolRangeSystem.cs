@@ -298,7 +298,7 @@ internal static class TerrainToolRangeSystem
         rangeInfo = $"{rangeInfo}\n{FormatPreviewToggleHint()}";
         piece.m_description = string.IsNullOrWhiteSpace(piece.m_description)
             ? rangeInfo
-            : $"{piece.m_description}\n\n{rangeInfo}";
+            : $"{piece.m_description}\n{rangeInfo}";
     }
 
     internal static bool ShouldSuppressCameraZoomInput()
