@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.14
+
+- Removed the extra blank line between vanilla piece descriptions and Groundwork terrain-tool hints for a more compact build panel.
+- Consolidated terrain grid placement state into the existing click context, preserving preview positions, per-click consumption, and placement costs.
+- Reduced repeated cultivation-rule and prefab-name lookups while preserving planting eligibility, biome restrictions, and live configuration updates.
+- Simplified beehive night/rain hover text composition and removed its temporary list allocation without changing displayed text or production behavior.
+
 ## 1.1.13
 
 - Fixed dedicated-server harvest bookkeeping using an uninitialized remote `Player.Skills` instance, which could store Farming level 0 and emit a misleading Farming level 1 message even though the harvesting character retained their real level. Pickable and beehive requests now carry the acting character's Farming level and bind it to that character's current network owner.
