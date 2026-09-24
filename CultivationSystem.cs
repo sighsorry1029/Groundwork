@@ -130,14 +130,28 @@ internal static class CultivationSystem
     internal static bool TryGetPlanting(Piece piece, out float spacing)
     {
         spacing = 0f;
-        if (piece == null || !Registrations.ContainsKey(PrefabName(piece)) ||
-            !Rules.TryGetValue(PrefabName(piece), out Entry? rule) || rule.Plantable != true)
+        Entry? rule = GetPlantingRule(piece);
+        if (rule == null)
         {
             return false;
         }
 
         spacing = rule.Spacing;
         return true;
+    }
+
+    private static Entry? GetPlantingRule(Piece piece)
+    {
+        if (piece == null)
+        {
+            return null;
+        }
+
+        string prefab = PrefabName(piece);
+        return Registrations.ContainsKey(prefab) &&
+               Rules.TryGetValue(prefab, out Entry? rule) && rule.Plantable == true
+            ? rule
+            : null;
     }
 
     internal static bool IsPlantedPickable(Pickable? pickable)
@@ -148,15 +162,15 @@ internal static class CultivationSystem
 
     internal static bool HasPlacementBiomeOverride(Piece piece)
     {
-        return TryGetPlanting(piece, out _) && Rules[PrefabName(piece)].Biomes != null;
+        return GetPlantingRule(piece)?.Biomes != null;
     }
 
     internal static bool IsPlacementBiomeAllowed(Piece piece, Heightmap? heightmap, Vector3 position)
     {
         Heightmap.Biome mask = piece.m_onlyInBiome;
-        if (HasPlacementBiomeOverride(piece))
+        Entry? rule = GetPlantingRule(piece);
+        if (rule?.Biomes != null)
         {
-            Entry rule = Rules[PrefabName(piece)];
             if (!GrowthOverrideSystem.TryResolveBiomeMask(rule.Prefab, rule.Biomes, out mask))
             {
                 // An explicit restriction must never become unrestricted while EWD loads,
