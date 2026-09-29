@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.15
+
+- Added `LingonberryBush` to the default `cultivation.yml` recipes. Each planting costs 30 Lingonberry and 15 Rotten Meat, requires cultivated ground in Deep North, and uses 2-metre spacing.
+- Existing `cultivation.yml` files are preserved; add the Lingonberry recipe manually to enable it in an existing configuration.
+- Updated the package's BepInEx dependency to `5.4.2351`.
+
 ## 1.1.14
 
 - Removed the extra blank line between vanilla piece descriptions and Groundwork terrain-tool hints for a more compact build panel.

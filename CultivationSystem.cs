@@ -807,6 +807,15 @@ internal static class CultivationSystem
   cultivatedGroundOnly: true
   spacing: 2
 
+- prefab: LingonberryBush
+  plantable: true
+  resources:
+    - Lingonberry, 30
+    - RottenMeat, 15
+  cultivatedGroundOnly: true
+  spacing: 2
+  biomes: [DeepNorth]
+
 - prefab: Pickable_Dandelion
   plantable: true
   resources:
