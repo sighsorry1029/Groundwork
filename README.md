@@ -177,6 +177,10 @@ Copy only the entries you want to change from the corresponding generated refere
 
 ## Pickable cultivation and harvested visuals
 
+When **PlantEverything** is installed, Groundwork automatically lets it handle Cultivator recipes, planting conditions, removal, and harvested visuals. Groundwork does not read, create, or overwrite `cultivation.yml` in this mode, and its natural Pickable removal settings are ignored. Existing Groundwork plantings are not migrated or given special compatibility handling; adding or removing PlantEverything in an existing world is outside this compatibility scope. Use the same mod combination on the server and clients.
+
+Terrain tools, Farming effects, pollination, rain bonuses, and beehive features remain active. PlantEverything's live growth/respawn times are the base values unless explicitly overridden in Groundwork's `plants.yml` or `pickables.yml`; Groundwork bonuses then apply. Groundwork's crop and foraging hover modes control the timers, including `Off`, without changing PlantEverything's saved settings. Grid/mass planting still supports ordinary `Plant` crops and saplings; PlantEverything's additional Pickable bushes and mushrooms are not included.
+
 `cultivation.yml` uses a root sequence with flat recipe settings. Harvested visuals are built in and are not configured in this file:
 
 ```yaml

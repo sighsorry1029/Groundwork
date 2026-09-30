@@ -32,7 +32,8 @@ internal static class PickedVisualSystem
 
     internal static void Refresh(Pickable pickable)
     {
-        if (pickable == null || SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
+        if (PlantEverythingCompatSystem.IsActive || pickable == null ||
+            SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
         {
             return;
         }

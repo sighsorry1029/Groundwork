@@ -532,7 +532,7 @@ internal static class GrowthOverrideSystem
             ApplyFileTexts(
                 File.ReadAllText(PickablesOverrideFilePath),
                 File.ReadAllText(PlantsOverrideFilePath),
-                File.ReadAllText(CultivationFilePath),
+                PlantEverythingCompatSystem.IsActive ? "[]" : File.ReadAllText(CultivationFilePath),
                 publish: true,
                 $"{PickablesOverrideFilePath}, {PlantsOverrideFilePath}, and {CultivationFilePath}");
         }
@@ -570,6 +570,7 @@ internal static class GrowthOverrideSystem
         string fileName = Path.GetFileName(path);
         return fileName.Equals(PickablesOverrideFileName, StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals(PlantsOverrideFileName, StringComparison.OrdinalIgnoreCase) ||
+               !PlantEverythingCompatSystem.IsActive &&
                fileName.Equals(CultivationFileName, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -675,9 +676,9 @@ internal static class GrowthOverrideSystem
             List<PlantGrowthEntry> plants = DeserializeRootSequence<PlantGrowthEntry>(
                 plantsYaml,
                 PlantsOverrideFileName);
-            List<CultivationSystem.Entry> cultivation = DeserializeRootSequence<CultivationSystem.Entry>(
-                cultivationYaml,
-                CultivationFileName);
+            List<CultivationSystem.Entry> cultivation = PlantEverythingCompatSystem.IsActive
+                ? []
+                : DeserializeRootSequence<CultivationSystem.Entry>(cultivationYaml, CultivationFileName);
             rules = NormalizeEntries(pickables, plants, cultivation);
             return true;
         }
@@ -1994,7 +1995,7 @@ internal static class GrowthOverrideSystem
                 DefaultPlantsOverrideTemplate());
         }
 
-        if (!File.Exists(CultivationFilePath))
+        if (!PlantEverythingCompatSystem.IsActive && !File.Exists(CultivationFilePath))
         {
             File.WriteAllText(CultivationFilePath, CultivationSystem.DefaultTemplate());
         }

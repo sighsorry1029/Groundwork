@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.16
+
+- Added automatic compatibility with PlantEverything. Groundwork now loads alongside it and leaves Cultivator recipes, planting conditions, removal, and harvested visuals to PlantEverything. Groundwork's `cultivation.yml` and natural Pickable removal settings are ignored while PlantEverything is installed; existing files are preserved.
+- Kept Groundwork's terrain tools, Farming effects, pollination, rain bonuses, and beehive features active. PlantEverything's live growth/respawn times remain the base unless explicitly overridden in Groundwork's `plants.yml` or `pickables.yml`.
+- Unified crop and Pickable timers under Groundwork's `Off`, `Compact`, and `Detailed` hover settings without changing PlantEverything's saved settings, preventing duplicate or inaccurate timers.
+- Compatibility assumes the same mod combination on the server and clients. Existing Groundwork plantings are not migrated; grid/mass planting still supports ordinary Plant crops and saplings, but not PlantEverything's additional Pickable bushes and mushrooms.
+
+**Adding the Lingonberry recipe introduced in 1.1.15:** Updating Groundwork does not merge new recipes into an existing `BepInEx/config/Groundwork/cultivation.yml`. Without PlantEverything installed, use either of these methods:
+
+- Paste the entry below into `cultivation.yml` as another top-level list item. If the file contains only `[]`, replace it with this entry. Do not add a second `LingonberryBush` entry if one already exists.
+- To regenerate the latest defaults, stop the game/server, back up and rename the existing `cultivation.yml`, then restart. Groundwork creates a new file with the Lingonberry recipe included. Regeneration uses the default recipes, so retain your backup if you have custom settings to reapply.
+
+In multiplayer, edit or regenerate the server's file; in single-player, use your local file. These instructions apply only without PlantEverything: while it is installed, Groundwork neither applies nor regenerates `cultivation.yml`.
+
+```yaml
+- prefab: LingonberryBush
+  plantable: true
+  resources:
+    - Lingonberry, 30
+    - RottenMeat, 15
+  cultivatedGroundOnly: true
+  biomes: [DeepNorth]
+  spacing: 2
+```
+
 ## 1.1.15
 
 - Added `LingonberryBush` to the default `cultivation.yml` recipes. Each planting costs 30 Lingonberry and 15 Rotten Meat, requires cultivated ground in Deep North, and uses 2-metre spacing.

@@ -1,7 +1,11 @@
 using System;
+using System.Collections;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.Serialization;
+using HarmonyLib;
 
 namespace Groundwork.Tests;
 
@@ -78,6 +82,7 @@ public static class CompatibilityProbe
             Assert(ReferenceEquals(read(original, framed), original) && framed.GetPos() == framed.Size(), "Extension after vanilla packet prefix");
             VerifyGridPlacementSnapshot(mod);
             HarvestSkillProbe.Run(mod, Assert);
+            VerifyPlantEverythingCompatibility(mod);
             System.Console.WriteLine(_checks + " original-DLL / actual Unity Mono managed checks passed.");
             System.Console.WriteLine("No Unity scene, socket, world, or plugin Awake was executed.");
             return 0;
@@ -87,6 +92,118 @@ public static class CompatibilityProbe
             System.Console.Error.WriteLine(error);
             return 1;
         }
+    }
+
+    private static void VerifyPlantEverythingCompatibility(Assembly mod)
+    {
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+        const BindingFlags instanceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Type compatibility = mod.GetType("Groundwork.PlantEverythingCompatSystem", true);
+        PropertyInfo active = compatibility.GetProperty("IsActive", flags);
+        MethodInfo setActive = active.GetSetMethod(true);
+        bool originalActive = (bool)active.GetValue(null);
+        Type growth = mod.GetType("Groundwork.GrowthOverrideSystem", true);
+        MethodInfo parseFiles = growth.GetMethod("TryParseAndNormalizeFiles", flags);
+        MethodInfo parseSynced = growth.GetMethod("TryParseAndNormalizeSyncedDocument", flags);
+        MethodInfo watchesFile = growth.GetMethod("IsOverrideFilePath", flags);
+        const string pickables = "- prefab: BlueberryBush, 17\n";
+        const string plants = "- prefab: Carrot, 100~200\n";
+        const string cultivation = "- prefab: RaspberryBush\n  resources: ['Raspberry, 1']\n";
+        const string invalidCultivation = "broken: [";
+        int CountRecipes(object rules) => ((IList)rules.GetType().GetProperty("Cultivation", instanceFlags).GetValue(rules)).Count;
+        var metadata = mod.GetType("Groundwork.GroundworkPlugin", true).GetCustomAttributesData();
+        Assert(!metadata.Any(x => x.AttributeType.Name == "BepInIncompatibility" &&
+                   (string)x.ConstructorArguments[0].Value == "advize.PlantEverything"), "PE is no longer declared incompatible");
+        Assert(metadata.Any(x => x.AttributeType.Name == "BepInDependency" &&
+                   (string)x.ConstructorArguments[0].Value == "advize.PlantEverything" &&
+                   (int)x.ConstructorArguments[1].Value == 2), "PE remains an optional dependency with ordered startup");
+        try
+        {
+            setActive.Invoke(null, new object[] { false });
+            object[] normal = { pickables, plants, cultivation, null, null };
+            Assert((bool)parseFiles.Invoke(null, normal) && CountRecipes(normal[3]) == 1,
+                "Without PE, cultivation recipes still normalize");
+            object[] invalid = { pickables, plants, invalidCultivation, null, null };
+            Assert(!(bool)parseFiles.Invoke(null, invalid), "Without PE, malformed cultivation is rejected");
+            Assert((bool)watchesFile.Invoke(null, new object[] { "cultivation.yml" }), "Without PE, cultivation changes are watched");
+            setActive.Invoke(null, new object[] { true });
+            object[] ignored = { pickables, plants, invalidCultivation, null, null };
+            Assert((bool)parseFiles.Invoke(null, ignored) && CountRecipes(ignored[3]) == 0,
+                "With PE, malformed dormant cultivation cannot block growth overrides");
+            string yaml = (string)ignored[3].GetType().GetProperty("Yaml", instanceFlags).GetValue(ignored[3]);
+            Assert(yaml.Contains("BlueberryBush, 17") && yaml.Contains("Carrot, 100~200"),
+                "With PE, explicit Pickable and Plant time overrides are preserved");
+            Assert(!(bool)watchesFile.Invoke(null, new object[] { "cultivation.yml" }) &&
+                   (bool)watchesFile.Invoke(null, new object[] { "pickables.yml" }) &&
+                   (bool)watchesFile.Invoke(null, new object[] { "plants.yml" }), "With PE, only active growth files trigger reloads");
+            object[] synced = { "pickables: []\nplants: []\ncultivation:\n- prefab: RaspberryBush\n  plantable: true\n  resources: []\n", null, null };
+            Assert((bool)parseSynced.Invoke(null, synced) && CountRecipes(synced[1]) == 0,
+                "With PE, synced cultivation is also disabled");
+            foreach (string patchName in new[] { "PickableCultivationPersistencePatch", "PickableCultivationFirstCyclePatch",
+                         "CultivationRemoveProtectionPatch", "CultivationRemovalRayPatch" })
+            {
+                Type patch = mod.GetType("Groundwork." + patchName, true);
+                var cultivationHarmony = new Harmony("Groundwork.Tests.Cultivation");
+                try
+                {
+                    var skipped = cultivationHarmony.CreateClassProcessor(patch).Patch();
+                    Assert(skipped == null || skipped.Count == 0, "With PE, Harmony does not install " + patchName);
+                }
+                finally
+                {
+                    cultivationHarmony.UnpatchSelf();
+                }
+            }
+
+            string pePath = Path.Combine(Path.GetDirectoryName(mod.Location), "Advize_PlantEverything.dll");
+            if (!File.Exists(pePath))
+            {
+                System.Console.WriteLine("PE DLL not supplied; its actual hover detour checks were not run.");
+                return;
+            }
+
+            Assembly pe = Assembly.LoadFrom(pePath);
+            Type hoverPatches = pe.GetType("Advize_PlantEverything.HoverTextPatches", true);
+            var harmony = new Harmony("Groundwork.Tests.PlantEverything");
+            MethodInfo[] postfixes = new[] { typeof(Pickable), typeof(Plant) }.Select(target =>
+                hoverPatches.GetMethod("Postfix", flags, null, new[] { target, typeof(string).MakeByRefType() }, null)).ToArray();
+            try
+            {
+                // Install PE's real postfixes on original game methods, but skip the native
+                // vanilla body. No PE Awake, Unity scene, or player/world state is initialized.
+                foreach (Type target in new[] { typeof(Pickable), typeof(Plant) })
+                {
+                    MethodInfo postfix = postfixes.Single(x => x.GetParameters()[0].ParameterType == target);
+                    harmony.Patch(target.GetMethod("GetHoverText"),
+                        prefix: new HarmonyMethod(typeof(CompatibilityProbe).GetMethod("KeepBaseHoverText", flags)),
+                        postfix: new HarmonyMethod(postfix));
+                }
+                Assert((bool)compatibility.GetMethod("PatchHoverTimers", flags).Invoke(null, new object[] { harmony, pe }),
+                    "Both real PE hover postfix signatures are supported");
+                foreach (Type target in new[] { typeof(Pickable), typeof(Plant) })
+                {
+                    object instance = FormatterServices.GetUninitializedObject(target);
+                    Assert((string)target.GetMethod("GetHoverText").Invoke(instance, null) == "base hover",
+                        "PE " + target.Name + " timer is skipped inside the patched game hover method");
+                }
+            }
+            finally
+            {
+                harmony.UnpatchSelf();
+            }
+            Assert(postfixes.All(method => Harmony.GetPatchInfo(method)?.Owners.Contains(harmony.Id) != true),
+                "Unloading restores PE hover methods");
+        }
+        finally
+        {
+            setActive.Invoke(null, new object[] { originalActive });
+        }
+    }
+
+    private static bool KeepBaseHoverText(ref string __result)
+    {
+        __result = "base hover";
+        return false;
     }
 
     private static void VerifyGridPlacementSnapshot(Assembly mod)

@@ -43,6 +43,11 @@ internal static class CultivationSystem
     internal static List<Entry> NormalizeEntries(IEnumerable<Entry> entries)
     {
         List<Entry> result = [];
+        if (PlantEverythingCompatSystem.IsActive)
+        {
+            return result;
+        }
+
         HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
         foreach (Entry entry in entries)
         {
@@ -101,6 +106,11 @@ internal static class CultivationSystem
     internal static void ApplyNormalizedRules(IReadOnlyList<Entry> entries)
     {
         Rules.Clear();
+        if (PlantEverythingCompatSystem.IsActive)
+        {
+            return;
+        }
+
         foreach (Entry entry in entries)
         {
             Rules.Add(entry.Prefab, entry);
@@ -112,6 +122,11 @@ internal static class CultivationSystem
 
     internal static void OnZNetSceneReady(ZNetScene scene)
     {
+        if (PlantEverythingCompatSystem.IsActive)
+        {
+            return;
+        }
+
         if (_scene != scene)
         {
             RestoreRegistrations(preservePlanted: true);
@@ -123,6 +138,11 @@ internal static class CultivationSystem
 
     internal static void ApplyToObjectDb(ObjectDB objectDb)
     {
+        if (PlantEverythingCompatSystem.IsActive)
+        {
+            return;
+        }
+
         _objectDb = objectDb;
         SynchronizeRegistrations();
     }
@@ -142,7 +162,7 @@ internal static class CultivationSystem
 
     private static Entry? GetPlantingRule(Piece piece)
     {
-        if (piece == null)
+        if (PlantEverythingCompatSystem.IsActive || piece == null)
         {
             return null;
         }
@@ -156,6 +176,11 @@ internal static class CultivationSystem
 
     internal static bool IsPlantedPickable(Pickable? pickable)
     {
+        if (PlantEverythingCompatSystem.IsActive)
+        {
+            return false;
+        }
+
         ZNetView? view = pickable != null ? pickable.GetComponent<ZNetView>() : null;
         return view != null && view.IsValid() && view.GetZDO().GetBool(PlantedKey);
     }
@@ -876,12 +901,16 @@ internal static class CultivationSystem
 [HarmonyPatch(typeof(Pickable), "Awake")]
 internal static class PickableCultivationPersistencePatch
 {
+    private static bool Prepare() => !PlantEverythingCompatSystem.IsActive;
+
     private static void Postfix(Pickable __instance) => CultivationSystem.EnsurePersistedPlantedPiece(__instance);
 }
 
 [HarmonyPatch(typeof(Pickable), "UpdateRespawn")]
 internal static class PickableCultivationFirstCyclePatch
 {
+    private static bool Prepare() => !PlantEverythingCompatSystem.IsActive;
+
     private static void Prefix(Pickable __instance)
     {
         CultivationSystem.RestorePickedTimeCache(__instance);
@@ -897,6 +926,8 @@ internal static class PickableCultivationFirstCyclePatch
 [HarmonyPatch(typeof(Player), "CheckCanRemovePiece")]
 internal static class CultivationRemoveProtectionPatch
 {
+    private static bool Prepare() => !PlantEverythingCompatSystem.IsActive;
+
     private static bool Prefix(Player __instance, Piece piece, ref bool __result)
     {
         bool managed = CultivationSystem.IsManagedPiece(piece);
@@ -920,6 +951,8 @@ internal static class CultivationRemoveProtectionPatch
 [HarmonyPatch(typeof(Player), "RemovePiece")]
 internal static class CultivationRemovalRayPatch
 {
+    private static bool Prepare() => !PlantEverythingCompatSystem.IsActive;
+
     private static readonly FieldInfo? RemoveMask = AccessTools.Field(typeof(Player), "m_removeRayMask");
 
     private static void Prefix(Player __instance, out int? __state)

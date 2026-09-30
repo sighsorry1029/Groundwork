@@ -16,14 +16,14 @@ using UnityEngine;
 namespace Groundwork;
 
 [BepInPlugin(ModGUID, ModName, ModVersion)]
-[BepInIncompatibility("advize.PlantEverything")]
+[BepInDependency(PlantEverythingCompatSystem.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(JewelcraftingGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(ZenBeehiveGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(ExpandWorldDataGuid, BepInDependency.DependencyFlags.SoftDependency)]
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.1.15";
+    internal const string ModVersion = "1.1.16";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
@@ -94,6 +94,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         Config.SaveOnConfigSet = false;
         try
         {
+            PlantEverythingCompatSystem.Initialize(_harmony);
             Settings.Bind(this);
             _ = ConfigSync.AddLockingConfigEntry(Settings.General.LockConfiguration);
             InitializeSyncedYamlValue();
@@ -137,6 +138,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         RunShutdownStep(nameof(Localizer), Localizer.Unload);
         RunShutdownStep("synced YAML state", DisposeSyncedYamlValue);
         RunShutdownStep("YAML file watcher", DisposeWatcher);
+        RunShutdownStep(nameof(PlantEverythingCompatSystem), PlantEverythingCompatSystem.Shutdown);
         _terrainTools = Array.Empty<NormalizedTerrainToolConfig>();
         _suppressSyncedYamlChanged = false;
         _yamlAuthorityMode = default;

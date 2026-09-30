@@ -1,7 +1,8 @@
 param(
     [string] $GamePath = 'C:\Program Files (x86)\Steam\steamapps\common\Valheim',
     [string] $GameManaged = '',
-    [string] $ModDll = "$PSScriptRoot\..\bin\Debug\Groundwork.dll"
+    [string] $ModDll = "$PSScriptRoot\..\bin\Debug\Groundwork.dll",
+    [string] $PlantEverythingDll = ''
 )
 $ErrorActionPreference = 'Stop'
 $managed = if ($GameManaged) { $GameManaged } else { Join-Path $GamePath 'valheim_Data\Managed' }
@@ -25,6 +26,9 @@ $harmonyReference = '/reference:' + (Join-Path $core '0Harmony.dll')
 if ($LASTEXITCODE) { throw 'Mono probe compilation failed.' }
 $isolatedMod = Join-Path $directory 'Groundwork.dll'
 Copy-Item -LiteralPath $ModDll -Destination $isolatedMod
+if ($PlantEverythingDll) {
+    Copy-Item -LiteralPath $PlantEverythingDll -Destination (Join-Path $directory 'Advize_PlantEverything.dll')
+}
 # Only this disposable test folder receives dependencies. Never copy them into the game.
 Get-ChildItem -LiteralPath $core -Filter *.dll | Copy-Item -Destination $directory
 $stdout = Join-Path $directory 'stdout.txt'
