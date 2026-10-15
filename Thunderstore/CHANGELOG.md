@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.17
+
+- Changed the default `LingonberryBush` recipe to `cultivatedGroundOnly: false`, allowing planting on uncultivated ground in Deep North. The Deep North biome restriction, resource costs, and 2-metre spacing are unchanged.
+- Existing `cultivation.yml` files are preserved. To apply this change, set `cultivatedGroundOnly: false` in your existing `LingonberryBush` entry, including entries copied from the 1.1.16 instructions. Alternatively, stop the game/server, back up and rename the file, then restart to regenerate the defaults and reapply any custom recipes. In multiplayer, update the server's file. Groundwork's cultivation settings remain inactive while PlantEverything is installed.
+
 ## 1.1.16
 
 - Added automatic compatibility with PlantEverything. Groundwork now loads alongside it and leaves Cultivator recipes, planting conditions, removal, and harvested visuals to PlantEverything. Groundwork's `cultivation.yml` and natural Pickable removal settings are ignored while PlantEverything is installed; existing files are preserved.

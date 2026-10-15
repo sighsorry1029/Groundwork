@@ -837,7 +837,7 @@ internal static class CultivationSystem
   resources:
     - Lingonberry, 30
     - RottenMeat, 15
-  cultivatedGroundOnly: true
+  cultivatedGroundOnly: false
   spacing: 2
   biomes: [DeepNorth]
 
