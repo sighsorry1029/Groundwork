@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.18
+
+- Added optional compatibility with Path of Valheiman. Compatibility is selected by callback signatures and IL patterns, not an exact version number. PoV 5.0.4 is the reviewed reference; other versions receive a diagnostic warning and the same structural checks. A failed check rolls back the adapter hooks instead of leaving a partial integration. Matching structure does not guarantee unchanged behavior in newer PoV versions.
+- Coordinated mass planting and area harvesting to avoid overlapping actions and nested range searches, including airborne harvesting. PoV's scythe-radius and pickaxe terrain-prefab changes run before Groundwork's corresponding changes.
+- Applied explicit `plants.yml` growth times before PoV and Groundwork growth bonuses. PoV wild-regrowth bonuses now use a per-cycle rate alongside Groundwork's timers instead of backdating the harvest timestamp; PoV's existing owner eligibility is unchanged, and previously backdated timestamps are not migrated.
+- Combined hive production speed and capacity calculations with PoV's node bonuses, respected Winter Hive biome permissions, and retained stored honey when effective capacity decreases. PoV's builder credit, extra rewards, and hive node behavior remain enabled.
+- Preserved the planting player's Farming snapshot during Quick Replant and coordinated Bed Watch's timer with Groundwork's hover modes and remaining-time calculation. Explicit administrator biome restrictions remain enforced for matching Plant entries.
+- Kept PoV's progression policy and cultivation recipes unchanged. Its default frozen vanilla skill level can still reduce Farming-based bonuses. Groundwork's `cultivation.yml` remains active unless PlantEverything is installed. Use the same mod versions on the server and clients; PoV is optional and is not bundled.
+
 ## 1.1.17
 
 - Changed the default `LingonberryBush` recipe to `cultivatedGroundOnly: false`, allowing planting on uncultivated ground in Deep North. The Deep North biome restriction, resource costs, and 2-metre spacing are unchanged.
