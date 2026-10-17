@@ -789,7 +789,7 @@ internal static class BeehivePollinationSystem
 
     internal static int GetEffectiveMaxHoney(Beehive beehive, bool preserveStoredHoney = true)
     {
-        int baseMax = Mathf.Max(1, beehive.m_maxHoney);
+        int baseMax = Mathf.Max(1, PathOfValheimanCompatSystem.HiveBaseCapacity(beehive));
         int effectiveMax = baseMax + GetFarmingCapacityBonusHoney(beehive);
 
         if (preserveStoredHoney)
@@ -896,6 +896,7 @@ internal static class BeehivePollinationSystem
         multiplier *= unloadedCatchup ? ApplyUnloadedCatchupEffectiveness(pollinationMultiplier) : pollinationMultiplier;
         multiplier *= GetNightProductionMultiplier(unloadedCatchup);
         multiplier *= EnvironmentEffectSystem.GetBeehiveRainHoneyRate(unloadedCatchup);
+        multiplier *= PathOfValheimanCompatSystem.HiveSpeedMultiplier(beehive);
         return Mathf.Max(0f, multiplier);
     }
 
@@ -1726,6 +1727,10 @@ internal static class BeehivePollinationSystem
 
     private static bool IsBiomeAllowed(Beehive beehive)
     {
+        if (PathOfValheimanCompatSystem.IsActive)
+        {
+            return PathOfValheimanCompatSystem.CheckHiveBiome(beehive);
+        }
         return (Heightmap.FindBiome(beehive.transform.position) & beehive.m_biome) != 0;
     }
 
@@ -1909,6 +1914,7 @@ internal static class BeehiveAwakePollinationPatch
 [HarmonyPatch(typeof(Beehive), "UpdateBees")]
 internal static class BeehiveUpdateBeesPollinationPatch
 {
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     private static bool Prefix(Beehive __instance, ref float __state)
     {
         __state = 0f;

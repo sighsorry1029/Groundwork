@@ -399,6 +399,16 @@ internal static class GrowthOverrideSystem
 
     internal static void CheckCultivationPlacementBiome(Player player)
     {
+        if (PathOfValheimanCompatSystem.IsActive && player.GetPlacementStatus() == Player.PlacementStatus.Valid &&
+            GameAccess.PlacementGhost(player) is GameObject plantGhost &&
+            plantGhost.GetComponent<Plant>() is Plant plant &&
+            TryGetPlantRule(plant, out ResolvedPlantRule rule) && rule.HasBiomeOverride &&
+            !IsBiomeAllowed(rule.BiomeMask, Heightmap.FindHeightmap(plantGhost.transform.position), plantGhost.transform.position))
+        {
+            // PoV can snap the ghost after vanilla validation. Recheck explicit YAML at that position.
+            GameAccess.PlacementStatus(player) = Player.PlacementStatus.WrongBiome;
+        }
+
         if (player.GetPlacementStatus() == Player.PlacementStatus.Valid &&
             GameAccess.PlacementGhost(player) is GameObject ghost &&
             ghost.GetComponent<Piece>() is Piece piece &&

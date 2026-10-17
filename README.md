@@ -177,9 +177,27 @@ Copy only the entries you want to change from the corresponding generated refere
 
 ## Pickable cultivation and harvested visuals
 
+### Path of Valheiman
+
+Groundwork automatically enables optional compatibility with **Path of Valheiman** when the required callback signatures and IL patterns match. Version numbers do not block installation. The reviewed reference is PoV 5.0.4; other versions produce a diagnostic warning and undergo the same structural checks. A mismatch cancels the adapter and removes hooks installed during that attempt. Matching structure is not a guarantee that a newer version's behavior is unchanged. Install the same mod versions on the server and clients.
+
+- PoV's skill progression policy remains authoritative. Its default `Disable vanilla progression = true` and `Frozen skill level = 0` can reduce Groundwork's Farming-based bonuses; Groundwork does not substitute saved skill levels or tree levels.
+- When PoV's mass-plant ability and its key are active for a Plant, PoV handles the bed and Groundwork yields its grid/mass preview and input. PoV's area-pickup ability handles automatic range harvesting when available. Additional calls made by Groundwork's scythe/range harvest or PoV's airborne harvest do not start another area search.
+- PoV's scythe radius and pickaxe terrain-prefab selection run before Groundwork's corresponding changes. Node bonuses remain PoV's calculations.
+- Explicit `plants.yml` grow times are applied before PoV's growth bonus and Groundwork's growth effects. PoV wild-regrowth bonuses use a separate per-cycle rate, combined with Groundwork's required time, instead of backdating the harvest timestamp. PoV's existing owner eligibility is retained; this does not add remote-owner bonus delivery. Previously backdated timestamps are not migrated.
+- Hive node bonuses and Groundwork effects share production-time and capacity calculations. Winter Hive's biome permission is respected. Builder credit, extra rewards, Hive Chain, Swarm Split and other PoV node behavior remain enabled. Stored honey is preserved when effective capacity decreases.
+- Quick Replant supplies its actual player to Groundwork's planting-skill snapshot. Bed Watch uses Groundwork's remaining-time calculation; only its duplicate timer is suppressed when Groundwork displays one. PoV's other credit/planter text is retained.
+- `cultivation.yml` stays active (unless PlantEverything is also installed). PoV's Wild Sowing is a separate recipe/lifecycle choice. To avoid two planting routes, choose the desired provider in their existing settings. Explicit administrator biome restrictions take precedence over PoV's planting unlock for matching Plant entries; the unlock is not extended to Groundwork's Pickable recipes.
+
+The adapter does not change PoV's reward/RPC acceptance policy. Dedicated-server owner changes, simultaneous harvests, node refunds, and actual terrain/planting behavior still require in-game validation. No PoV DLL is included in Groundwork's package.
+
+### PlantEverything
+
 When **PlantEverything** is installed, Groundwork automatically lets it handle Cultivator recipes, planting conditions, removal, and harvested visuals. Groundwork does not read, create, or overwrite `cultivation.yml` in this mode, and its natural Pickable removal settings are ignored. Existing Groundwork plantings are not migrated or given special compatibility handling; adding or removing PlantEverything in an existing world is outside this compatibility scope. Use the same mod combination on the server and clients.
 
 Terrain tools, Farming effects, pollination, rain bonuses, and beehive features remain active. PlantEverything's live growth/respawn times are the base values unless explicitly overridden in Groundwork's `plants.yml` or `pickables.yml`; Groundwork bonuses then apply. Groundwork's crop and foraging hover modes control the timers, including `Off`, without changing PlantEverything's saved settings. Grid/mass planting still supports ordinary `Plant` crops and saplings; PlantEverything's additional Pickable bushes and mushrooms are not included.
+
+### Recipe format
 
 `cultivation.yml` uses a root sequence with flat recipe settings. Harvested visuals are built in and are not configured in this file:
 

@@ -17,6 +17,7 @@ namespace Groundwork;
 
 [BepInPlugin(ModGUID, ModName, ModVersion)]
 [BepInDependency(PlantEverythingCompatSystem.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency(PathOfValheimanCompatSystem.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(JewelcraftingGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(ZenBeehiveGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(ExpandWorldDataGuid, BepInDependency.DependencyFlags.SoftDependency)]
@@ -99,6 +100,7 @@ public class GroundworkPlugin : BaseUnityPlugin
             _ = ConfigSync.AddLockingConfigEntry(Settings.General.LockConfiguration);
             InitializeSyncedYamlValue();
             GrowthOverrideSystem.Initialize(this, ConfigSync);
+            PathOfValheimanCompatSystem.Initialize(_harmony);
             GroundworkConfigLoader.EnsureLocalFileExists(YamlConfigDirectoryPath, TerrainToolsYamlFilePath);
             RefreshYamlAuthorityMode(force: true);
 
@@ -139,6 +141,7 @@ public class GroundworkPlugin : BaseUnityPlugin
         RunShutdownStep("synced YAML state", DisposeSyncedYamlValue);
         RunShutdownStep("YAML file watcher", DisposeWatcher);
         RunShutdownStep(nameof(PlantEverythingCompatSystem), PlantEverythingCompatSystem.Shutdown);
+        RunShutdownStep(nameof(PathOfValheimanCompatSystem), PathOfValheimanCompatSystem.Shutdown);
         _terrainTools = Array.Empty<NormalizedTerrainToolConfig>();
         _suppressSyncedYamlChanged = false;
         _yamlAuthorityMode = default;

@@ -21,6 +21,9 @@ internal static class CompatibilityMonoHost
     [DllImport(MonoDll, CallingConvention = CallingConvention.Cdecl)] private static extern IntPtr mono_object_unbox(IntPtr value);
     [DllImport(MonoDll, CallingConvention = CallingConvention.Cdecl)] private static extern void mono_jit_cleanup(IntPtr domain);
     [DllImport(MonoDll, CallingConvention = CallingConvention.Cdecl)] private static extern IntPtr mono_get_runtime_build_info();
+    [DllImport(MonoDll, CallingConvention = CallingConvention.Cdecl)] private static extern void mono_add_internal_call(string name, IntPtr method);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int NativeInt();
+    private static readonly NativeInt ObjectOffsetStub = () => 0;
 
     private static int Main(string[] args)
     {
@@ -39,6 +42,12 @@ internal static class CompatibilityMonoHost
             Console.WriteLine("Mono native build: " + Marshal.PtrToStringAnsi(mono_get_runtime_build_info()));
             domain = mono_jit_init_version("Groundwork.CompatibilityProbe", "v4.0.30319");
             if (domain == IntPtr.Zero) throw new InvalidOperationException("Mono domain initialization failed.");
+            if (File.Exists(Path.Combine(Path.GetDirectoryName(args[4]), "PathOfValheiman.dll")))
+            {
+                // No native Unity objects exist in this process. Only permit Object's static initializer.
+                mono_add_internal_call("UnityEngine.Object::GetOffsetOfInstanceIDInCPlusPlusObject", Marshal.GetFunctionPointerForDelegate(ObjectOffsetStub));
+                Console.WriteLine("PoV isolated probe: Unity native object offset and animation hashing are test stubs; no scene behavior is tested.");
+            }
             mono_domain_set_config(domain, Path.GetDirectoryName(args[3]), "CompatibilityProbe.exe.config");
             IntPtr assembly = mono_domain_assembly_open(domain, args[3]);
             if (assembly == IntPtr.Zero) throw new InvalidOperationException("Mono could not load the probe.");

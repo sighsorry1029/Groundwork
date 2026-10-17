@@ -60,6 +60,7 @@ internal static class PlayerUpdateGroundworkPatch
 [HarmonyPatch(typeof(Player), "UpdatePlacementGhost")]
 internal static class PlayerUpdatePlacementGhostGroundworkPatch
 {
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     private static void Prefix(
         Player __instance,
         out GrowthOverrideSystem.PieceBiomeOverrideState __state)
@@ -67,6 +68,7 @@ internal static class PlayerUpdatePlacementGhostGroundworkPatch
         __state = GrowthOverrideSystem.BeginPlacementBiomeOverride(__instance);
     }
 
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     private static void Postfix(Player __instance)
     {
         MassPlantingSystem.TrySnapPlacementGhost(__instance);

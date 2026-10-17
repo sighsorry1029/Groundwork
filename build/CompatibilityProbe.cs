@@ -83,6 +83,7 @@ public static class CompatibilityProbe
             VerifyGridPlacementSnapshot(mod);
             HarvestSkillProbe.Run(mod, Assert);
             VerifyPlantEverythingCompatibility(mod);
+            PathOfValheimanProbe.Run(mod, Assert);
             System.Console.WriteLine(_checks + " original-DLL / actual Unity Mono managed checks passed.");
             System.Console.WriteLine("No Unity scene, socket, world, or plugin Awake was executed.");
             return 0;

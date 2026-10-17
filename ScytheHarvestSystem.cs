@@ -271,6 +271,7 @@ internal static class ScytheHarvestSystem
 [HarmonyPatch(typeof(Attack), "DoMeleeAttack")]
 internal static class AttackDoMeleeAttackScytheHarvestPatch
 {
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     private static void Prefix(Attack __instance, out bool __state)
     {
         __state = ScytheHarvestSystem.ShouldOverrideVanillaHarvest(__instance);

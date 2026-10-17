@@ -989,6 +989,7 @@ internal static class AttackDoMeleeAttackPickaxeTerrainScalingPatch
 [HarmonyPatch(typeof(Attack), nameof(Attack.SpawnOnHitTerrain))]
 internal static class AttackSpawnOnHitTerrainPickaxeScalingPatch
 {
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     private static bool Prefix(
         GameObject prefab,
         Character character,

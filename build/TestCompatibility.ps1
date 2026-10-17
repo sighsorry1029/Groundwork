@@ -2,7 +2,9 @@ param(
     [string] $GamePath = 'C:\Program Files (x86)\Steam\steamapps\common\Valheim',
     [string] $GameManaged = '',
     [string] $ModDll = "$PSScriptRoot\..\bin\Debug\Groundwork.dll",
-    [string] $PlantEverythingDll = ''
+    [string] $PlantEverythingDll = '',
+    [string] $PathOfValheimanDll = '',
+    [string] $JotunnDll = ''
 )
 $ErrorActionPreference = 'Stop'
 $managed = if ($GameManaged) { $GameManaged } else { Join-Path $GamePath 'valheim_Data\Managed' }
@@ -22,12 +24,18 @@ $references = @('mscorlib.dll','System.dll','System.Core.dll') | ForEach-Object 
 if ($LASTEXITCODE) { throw 'Mono host compilation failed.' }
 $gameReferences = @('assembly_valheim.dll','assembly_utils.dll','UnityEngine.CoreModule.dll','netstandard.dll') | ForEach-Object { '/reference:' + (Join-Path $managed $_) }
 $harmonyReference = '/reference:' + (Join-Path $core '0Harmony.dll')
-& dotnet $compiler /nologo /noconfig /nostdlib+ /langversion:latest @references @gameReferences $harmonyReference /target:library "/out:$probe" "$PSScriptRoot/CompatibilityProbe.cs" "$PSScriptRoot/HarvestSkillProbe.cs"
+& dotnet $compiler /nologo /noconfig /nostdlib+ /langversion:latest @references @gameReferences $harmonyReference /target:library "/out:$probe" "$PSScriptRoot/CompatibilityProbe.cs" "$PSScriptRoot/HarvestSkillProbe.cs" "$PSScriptRoot/PathOfValheimanProbe.cs"
 if ($LASTEXITCODE) { throw 'Mono probe compilation failed.' }
 $isolatedMod = Join-Path $directory 'Groundwork.dll'
 Copy-Item -LiteralPath $ModDll -Destination $isolatedMod
 if ($PlantEverythingDll) {
     Copy-Item -LiteralPath $PlantEverythingDll -Destination (Join-Path $directory 'Advize_PlantEverything.dll')
+}
+if ($PathOfValheimanDll) {
+    Copy-Item -LiteralPath $PathOfValheimanDll -Destination (Join-Path $directory 'PathOfValheiman.dll')
+}
+if ($JotunnDll) {
+    Copy-Item -LiteralPath $JotunnDll -Destination (Join-Path $directory 'Jotunn.dll')
 }
 # Only this disposable test folder receives dependencies. Never copy them into the game.
 Get-ChildItem -LiteralPath $core -Filter *.dll | Copy-Item -Destination $directory

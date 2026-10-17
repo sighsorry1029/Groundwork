@@ -24,6 +24,7 @@ internal static class FarmingSkillSystem
     private const float DynamicProgressCheckpointSeconds = 30f;
     private static readonly HashSet<Pickable> SeenPickables = new();
     private static bool _rangePicking;
+    internal static bool RangePickupSuppressed => _rangePicking || _suppressRangePickup > 0;
     private static int _suppressRangePickup;
     private static int _pickupMask;
     private static EffectList? _foragingBonusEffectFallback;
@@ -234,8 +235,9 @@ internal static class FarmingSkillSystem
     {
         bool rangePickupEligible = !_rangePicking &&
                                    _suppressRangePickup == 0 &&
-                                   character is Player &&
+                                   character is Player player &&
                                    GroundworkToolsDomain.ForagingPickupMaxRange > 0f &&
+                                   !(player == Player.m_localPlayer && PathOfValheimanCompatSystem.OwnsRangeHarvest) &&
                                    IsRangePickupTarget(source);
         Vector3 origin = rangePickupEligible ? source.transform.position : default;
         return new PickableInteractPatchState(
@@ -383,6 +385,12 @@ internal static class FarmingSkillSystem
         }
 
         long pickedTime = zdo!.GetLong(ZDOVars.s_pickedTime, 0L);
+        float pathOfValheimanRate = PathOfValheimanCompatSystem.RespawnRate(zdo);
+        if (pathOfValheimanRate > 1f)
+        {
+            respawnSeconds /= pathOfValheimanRate;
+            modified = true;
+        }
         bool hasDynamicState = HasDynamicState(zdo, ForagingDynamicLastTicksKey);
         bool dynamicConfigured = foragingTarget && IsForagingDynamicRespawnConfigured();
         bool useDynamicProgress = hasDynamicState || dynamicConfigured;
@@ -682,7 +690,7 @@ internal static class FarmingSkillSystem
 
     internal static void TryStorePlanterSkill(Plant plant)
     {
-        Player? player = PlayerPlacePieceGroundworkPatch.PlantPlanter;
+        Player? player = PlayerPlacePieceGroundworkPatch.PlantPlanter ?? PathOfValheimanCompatSystem.ReplantPlayer;
         if (player == null || player != Player.m_localPlayer ||
             !GroundworkToolsDomain.PlantGrowFeatureEnabled ||
             !TryGetPlantZdo(plant, requireOwner: true, out ZDO? zdo))
@@ -700,7 +708,10 @@ internal static class FarmingSkillSystem
             return;
         }
 
-        ApplyConfiguredPlantGrowTime(plant, ref growTime);
+        if (!PathOfValheimanCompatSystem.IsActive)
+        {
+            ApplyConfiguredPlantGrowTime(plant, ref growTime);
+        }
         if (growTime <= 0f)
         {
             return;
@@ -907,7 +918,7 @@ internal static class FarmingSkillSystem
         return true;
     }
 
-    private static void ApplyConfiguredPlantGrowTime(Plant plant, ref float growTime)
+    internal static void ApplyConfiguredPlantGrowTime(Plant plant, ref float growTime)
     {
         if (!GrowthOverrideSystem.TryGetPlantRule(
                 plant,
@@ -1324,6 +1335,7 @@ internal static class PickableSetPickedForagingSkillPatch
 {
     private static void Postfix(Pickable __instance, bool picked)
     {
+        PathOfValheimanCompatSystem.ResetRespawnRate(__instance);
         PickableRespawnHoverSystem.RefreshHoverProxy(__instance);
         FarmingSkillSystem.ResetForagingDynamicProgress(__instance, picked);
     }
@@ -1341,6 +1353,7 @@ internal static class PickableShouldRespawnForagingPatch
 [HarmonyPatch(typeof(Plant), "GetGrowTime")]
 internal static class PlantGetGrowTimeGroundworkPatch
 {
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(Plant __instance, ref float __result)
     {

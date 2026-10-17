@@ -223,7 +223,7 @@ internal static class MassPlantingSystem
     // Placement interception and preview.
     internal static bool TryInterceptPlace(Player player, Piece piece, ref bool result)
     {
-        if (_placingBatch ||
+        if (_placingBatch || PathOfValheimanCompatSystem.OwnsPlanting(player, piece) ||
             !TryGetPlant(piece, out Plant? plantCandidate) ||
             UpdatePlacementGhostMethod == null)
         {
@@ -393,7 +393,7 @@ internal static class MassPlantingSystem
 
     internal static void TrySnapPlacementGhost(Player player)
     {
-        if (_placingBatch ||
+        if (_placingBatch || PathOfValheimanCompatSystem.OwnsPlanting(player) ||
             !_gridPlantingMode ||
             player.GetPlacementStatus() != Player.PlacementStatus.Valid ||
             !TryGetSelectedPlant(player, out Piece? pieceCandidate, out Plant? plant))
@@ -412,7 +412,7 @@ internal static class MassPlantingSystem
 
     internal static void UpdatePlacementPreview(Player player)
     {
-        if (_placingBatch ||
+        if (_placingBatch || PathOfValheimanCompatSystem.OwnsPlanting(player) ||
             !TryGetSelectedPlant(player, out Piece? pieceCandidate, out Plant? plantCandidate))
         {
             ClearPlacementPreview();
@@ -609,7 +609,7 @@ internal static class MassPlantingSystem
 
     private static bool CanUsePlantingControls(Player player)
     {
-        return player.InPlaceMode() &&
+        return !PathOfValheimanCompatSystem.OwnsPlanting(player) && player.InPlaceMode() &&
                !Hud.IsPieceSelectionVisible() &&
                !Hud.InRadial() &&
                !InventoryGui.IsVisible() &&

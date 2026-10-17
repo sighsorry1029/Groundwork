@@ -480,6 +480,7 @@
     <Compile Include="BeehivePollinationSystem.cs" />
     <Compile Include="ZenBeehiveCompatSystem.cs" />
     <Compile Include="PlantEverythingCompatSystem.cs" />
+    <Compile Include="PathOfValheimanCompatSystem.cs" />
     <Compile Include="EnvironmentEffectSystem.cs" />
     <Compile Include="ScytheHarvestSystem.cs" />
     <Compile Include="ScytheToolCompatSystem.cs" />
