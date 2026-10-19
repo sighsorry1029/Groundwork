@@ -706,13 +706,10 @@ internal static class MassPlantingSystem
         ];
         if (IsMassPlantingEnabled())
         {
-            if (Player.m_localPlayer is { } player && IsMassPlantingLocked(player, out int farmingLevel))
+            string? lockedHint = Player.m_localPlayer is { } player ? Progression.GetLockedHint(player, compact: false) : null;
+            if (lockedHint != null)
             {
-                hints.Add(GroundworkLocalization.Format(
-                    "groundwork_mass_plant_locked",
-                    "Mass Plant locked (Farming skill {0}/{1})",
-                    farmingLevel,
-                    FirstMassPlantingUnlockLevel));
+                hints.Add(lockedHint);
             }
             else
             {
@@ -781,15 +778,8 @@ internal static class MassPlantingSystem
 
         int count = GetCurrentPlantCount(player);
         bool massPlantingEnabled = IsMassPlantingEnabled();
-        int farmingLevel = 0;
-        bool massPlantingLocked = massPlantingEnabled && IsMassPlantingLocked(player, out farmingLevel);
-        string massState = massPlantingLocked
-            ? GroundworkLocalization.Format(
-                "groundwork_mass_plant_locked_short",
-                "Locked {0}/{1}",
-                farmingLevel,
-                FirstMassPlantingUnlockLevel)
-            : FormatMassPlantState(count);
+        string massState = (massPlantingEnabled ? Progression.GetLockedHint(player, compact: true) : null)
+                           ?? FormatMassPlantState(count);
         string gridState = _gridPlantingMode
             ? GroundworkLocalization.Text("groundwork_state_on", "On")
             : GroundworkLocalization.Text("groundwork_state_off", "Off");
@@ -985,7 +975,7 @@ internal static class MassPlantingSystem
 
     private static void ClampSelectedPlantCount(Player player)
     {
-        int maxUnlocked = GetMaxUnlockedPlantCount(player);
+        int maxUnlocked = Progression.GetMaxUnlockedPlantCount(player);
         if (maxUnlocked <= 0)
         {
             _selectedPlantCount = 0;
@@ -998,52 +988,49 @@ internal static class MassPlantingSystem
         }
     }
 
-    private static int GetMaxUnlockedPlantCount(Player player)
+    // Share the unlock policy between placement, wheel selection and both hint locations.
+    // Kept separate from preview initialization so it also runs without Unity scene objects.
+    internal static class Progression
     {
-        if (!GroundworkToolsDomain.MassPlantingEnabled)
+        internal static int GetMaxUnlockedPlantCount(Player player)
         {
-            return 0;
+            if (!GroundworkToolsDomain.MassPlantingEnabled)
+            {
+                return 0;
+            }
+
+            if (PathOfValheimanCompatSystem.UsesMassPlantingNodes)
+            {
+                return PathOfValheimanCompatSystem.MassPlantingUnlocked ? 25 : 0;
+            }
+
+            float farmingLevel = GetFarmingLevel(player);
+            if (farmingLevel < FirstMassPlantingUnlockLevel) return 0;
+            if (farmingLevel < 40f) return 5;
+            if (farmingLevel < 60f) return 10;
+            if (farmingLevel < 80f) return 15;
+            if (farmingLevel < 100f) return 20;
+            return 25;
         }
 
-        float farmingLevel = GetFarmingLevel(player);
-        if (farmingLevel < FirstMassPlantingUnlockLevel)
+        internal static string? GetLockedHint(Player player, bool compact)
         {
-            return 0;
+            if (GetMaxUnlockedPlantCount(player) > 0) return null;
+
+            if (PathOfValheimanCompatSystem.UsesMassPlantingNodes)
+            {
+                return compact
+                    ? GroundworkLocalization.Text("groundwork_mass_plant_pov_locked_short", "Requires Broad Sowing")
+                    : GroundworkLocalization.Text("groundwork_mass_plant_pov_locked", "Mass Plant locked (requires PoV Broad Sowing)");
+            }
+
+            int level = Mathf.FloorToInt(GetFarmingLevel(player));
+            return compact
+                ? GroundworkLocalization.Format("groundwork_mass_plant_locked_short", "Locked {0}/{1}", level, FirstMassPlantingUnlockLevel)
+                : GroundworkLocalization.Format("groundwork_mass_plant_locked", "Mass Plant locked (Farming skill {0}/{1})", level, FirstMassPlantingUnlockLevel);
         }
 
-        if (farmingLevel < 40f)
-        {
-            return 5;
-        }
-
-        if (farmingLevel < 60f)
-        {
-            return 10;
-        }
-
-        if (farmingLevel < 80f)
-        {
-            return 15;
-        }
-
-        if (farmingLevel < 100f)
-        {
-            return 20;
-        }
-
-        return 25;
-    }
-
-    private static bool IsMassPlantingLocked(Player player, out int farmingLevel)
-    {
-        float level = GetFarmingLevel(player);
-        farmingLevel = Mathf.FloorToInt(level);
-        return level < FirstMassPlantingUnlockLevel;
-    }
-
-    private static float GetFarmingLevel(Player player)
-    {
-        return Mathf.Clamp(player.GetSkillLevel(Skills.SkillType.Farming), 0f, 100f);
+        private static float GetFarmingLevel(Player player) => Mathf.Clamp(player.GetSkillLevel(Skills.SkillType.Farming), 0f, 100f);
     }
 
     private static bool TryHandleMassPlantWheel(Player player)
@@ -1059,7 +1046,7 @@ internal static class MassPlantingSystem
             return false;
         }
 
-        int maxUnlocked = GetMaxUnlockedPlantCount(player);
+        int maxUnlocked = Progression.GetMaxUnlockedPlantCount(player);
         int current = GetCurrentPlantCount(player);
         int next = GetNextPlantCount(current, maxUnlocked, scroll > 0f);
 

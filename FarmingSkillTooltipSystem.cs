@@ -145,7 +145,7 @@ internal static class FarmingSkillTooltipPatch
 
             string text = FarmingSkillTooltipText.Append(
                 tooltip.m_text,
-                GroundworkToolsDomain.MassPlantingEnabled,
+                GroundworkToolsDomain.MassPlantingEnabled && !PathOfValheimanCompatSystem.UsesMassPlantingNodes,
                 GroundworkToolsDomain.PlantGrowSpeedFactor > 1.001f,
                 GroundworkToolsDomain.ForagingPickupMaxRange > 0.001f,
                 GroundworkToolsDomain.FarmingRangeHarvestIncludesCrops,

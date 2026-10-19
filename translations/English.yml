@@ -41,6 +41,8 @@ groundwork_skill_farming_beehive_capacity: "Beehives remember the builder's or l
 groundwork_mass_plant: "Mass Plant"
 groundwork_mass_plant_locked: "Mass Plant locked (Farming skill {0}/{1})"
 groundwork_mass_plant_locked_short: "Locked {0}/{1}"
+groundwork_mass_plant_pov_locked: "Mass Plant locked (requires PoV Broad Sowing)"
+groundwork_mass_plant_pov_locked_short: "Requires Broad Sowing"
 groundwork_grid_plant: "Grid Plant"
 groundwork_mass: "Mass"
 groundwork_grid: "Grid"

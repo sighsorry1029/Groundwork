@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace Groundwork;
 
-// PoV owns its nodes, recipes and progression. This adapter only coordinates shared operations.
+// PoV owns progression; Groundwork can provide planting controls for its MassPlant ability.
 internal static class PathOfValheimanCompatSystem
 {
     internal const string PluginGuid = "treextr.pathofvalheiman";
@@ -18,6 +18,7 @@ internal static class PathOfValheimanCompatSystem
     internal static bool IsActive { get; private set; }
     internal static Player? ReplantPlayer { get; private set; }
     private static Func<bool>? _massPlantAllowed;
+    private static Func<string, bool>? _hasPovStat;
     private static Func<float>? _pickupRadius;
     private static AccessTools.FieldRef<bool>? _massPicking;
     private static Func<Beehive, int>? _hiveCapacity;
@@ -78,7 +79,8 @@ internal static class PathOfValheimanCompatSystem
 
         try
         {
-            _massPlantAllowed = AccessTools.MethodDelegate<Func<bool>>(Find("MassPlant", "get_Allowed", typeof(bool)));
+            MethodInfo massPlantAllowed = Find("MassPlant", "get_Allowed", typeof(bool));
+            _massPlantAllowed = AccessTools.MethodDelegate<Func<bool>>(massPlantAllowed);
             Type gathering = assembly.GetType("PassiveTree.Gathering", true)!;
             _massPicking = AccessTools.StaticFieldRefAccess<bool>(AccessTools.DeclaredField(gathering, "massPicking"));
             Type stat = assembly.GetType("PassiveTree.Stat", true)!;
@@ -117,6 +119,19 @@ internal static class PathOfValheimanCompatSystem
             Patch(Find("CraftBee", "Swarming", typeof(void), typeof(Beehive)), transpiler: nameof(UseEffectiveHiveCapacity));
             Patch(Find("CraftWorkHooks+Honey", "Postfix", typeof(void), typeof(Beehive), typeof(int)),
                 transpiler: nameof(UseEffectiveHiveCapacity));
+
+            // Older PoV releases without the public stats API keep the existing handoff.
+            // Bind once, but read the live ability so refunds and character changes need no cache.
+            Type? publicStats = assembly.GetType("Valheiman.Api.Stats");
+            if (publicStats != null)
+            {
+                MethodInfo? hasStat = publicStats.GetMethod("Has", BindingFlags.Public | BindingFlags.Static,
+                    null, new[] { typeof(string) }, null);
+                if (hasStat == null || hasStat.ReturnType != typeof(bool))
+                    throw new MissingMethodException("Valheiman.Api.Stats", "Has(string)");
+                _hasPovStat = (Func<string, bool>)Delegate.CreateDelegate(typeof(Func<string, bool>), hasStat);
+                Patch(massPlantAllowed, postfix: nameof(UseGroundworkPlanting));
+            }
             IsActive = true;
         }
         catch (Exception installError)
@@ -139,6 +154,7 @@ internal static class PathOfValheimanCompatSystem
         IsActive = false;
         ReplantPlayer = null;
         _massPlantAllowed = null;
+        _hasPovStat = null;
         _pickupRadius = null;
         _massPicking = null;
         _hiveCapacity = null;
@@ -149,9 +165,19 @@ internal static class PathOfValheimanCompatSystem
 
     internal static bool OwnsPlanting(Player player, Piece? piece = null)
     {
-        if (!IsActive || player == null || player != Player.m_localPlayer || !_massPlantAllowed!()) return false;
+        if (!IsActive || UsesMassPlantingNodes || player == null || player != Player.m_localPlayer || !_massPlantAllowed!()) return false;
         GameObject? target = piece != null ? piece.gameObject : GameAccess.PlacementGhost(player);
         return target != null && target.GetComponent<Plant>() != null;
+    }
+
+    internal static bool UsesMassPlantingNodes => IsActive && _hasPovStat != null;
+    internal static bool MassPlantingUnlocked => UsesMassPlantingNodes && _hasPovStat!("MassPlant");
+
+    private static void UseGroundworkPlanting(ref bool __result)
+    {
+        // This gate is shared by PoV's additional placements, wheel input and preview.
+        // Leave its finalizers and Clear path intact; GW's toggle governs multi-plant placement.
+        if (UsesMassPlantingNodes) __result = false;
     }
 
     internal static bool OwnsRangeHarvest => IsActive && (_massPicking!() || _pickupRadius!() > 0f);

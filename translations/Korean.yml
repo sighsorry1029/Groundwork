@@ -41,6 +41,8 @@ groundwork_skill_farming_beehive_capacity: "벌집은 설치자 또는 마지막
 groundwork_mass_plant: "대량 심기"
 groundwork_mass_plant_locked: "대량 심기 잠김 (농사 스킬 {0}/{1})"
 groundwork_mass_plant_locked_short: "잠김 {0}/{1}"
+groundwork_mass_plant_pov_locked: "대량 심기 잠김 (PoV Broad Sowing 필요)"
+groundwork_mass_plant_pov_locked_short: "Broad Sowing 필요"
 groundwork_grid_plant: "격자 심기"
 groundwork_mass: "대량"
 groundwork_grid: "격자"

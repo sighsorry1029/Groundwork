@@ -23,6 +23,8 @@ internal static class PathOfValheimanProbe
             a.AttributeType.Name == "BepInDependency" && (string)a.ConstructorArguments[0].Value == "treextr.pathofvalheiman" &&
             (int)a.ConstructorArguments[1].Value == 2), "PoV is an ordered soft dependency");
         assert(!(bool)compat.GetProperty("OwnsRangeHarvest", Static).GetValue(null), "PoV absent: no range takeover");
+        assert(!(bool)compat.GetProperty("UsesMassPlantingNodes", Static).GetValue(null), "PoV absent: Farming planting progression");
+        VerifyPlantingProgression(mod, null, assert);
         foreach (float invalid in new[] { 0f, -1f, float.NaN, float.PositiveInfinity })
             assert((float)Call("ValidRate", invalid) == 1f, "Reject invalid PoV rate " + invalid);
         assert((float)Call("ValidRate", 2f) == 2f, "Preserve valid PoV rate");
@@ -71,7 +73,11 @@ internal static class PathOfValheimanProbe
             assert(Active(), "Actual PoV DLL: complete adapter installs");
             assert(warnings.Count == 1 && warnings[0].Contains("5.0.5") && messages.Any(m => m.Contains("compatibility active")),
                 "Unreviewed version is diagnostic, not a rejection");
-            assert(harmony.GetPatchedMethods().Count() == 12, "All 12 PoV callback hooks installed atomically");
+            bool hasStatsApi = pov.GetType("Valheiman.Api.Stats") != null;
+            assert(harmony.GetPatchedMethods().Count() == (hasStatsApi ? 13 : 12), "PoV coordination and optional planting gate install atomically");
+            assert((bool)compat.GetProperty("UsesMassPlantingNodes", Static).GetValue(null) == hasStatsApi,
+                "Planting takeover requires the public stats API and successful hook installation");
+            if (hasStatsApi) VerifyPlantingProgression(mod, pov, assert);
 
             // This is the supplied PoV Borrowed struct and real patched callback, not a replica.
             var hive = (Beehive)FormatterServices.GetUninitializedObject(typeof(Beehive));
@@ -172,6 +178,8 @@ internal static class PathOfValheimanProbe
             harmony.UnpatchSelf();
             Call("Shutdown");
             assert(!Active() && (float)Call("RespawnRate", zdo) == 1f, "Unload ignores retained PoV cycle data");
+            assert(!(bool)compat.GetProperty("UsesMassPlantingNodes", Static).GetValue(null) &&
+                   compat.GetField("_hasPovStat", Static).GetValue(null) == null, "Unload clears planting takeover and API delegate");
             assert(!harmony.GetPatchedMethods().Any(), "PoV callback hooks are removed on unload");
 
             bool rejectedOperand = false;
@@ -208,6 +216,85 @@ internal static class PathOfValheimanProbe
             Call("Shutdown");
         }
     }
+
+    private static float _farmingLevel;
+    private static bool _massPlantEnabled;
+    private static bool _broadSowing;
+    private static string _queriedStat;
+
+    private static void VerifyPlantingProgression(Assembly mod, Assembly pov, Action<bool, string> assert)
+    {
+        Type progression = mod.GetType("Groundwork.MassPlantingSystem+Progression", true);
+        Type compat = mod.GetType("Groundwork.PathOfValheimanCompatSystem", true);
+        MethodInfo maximum = progression.GetMethod("GetMaxUnlockedPlantCount", Static);
+        MethodInfo hint = progression.GetMethod("GetLockedHint", Static);
+        int Max() => (int)maximum.Invoke(null, new object[] { null });
+        string Hint(bool compact) => (string)hint.Invoke(null, new object[] { null, compact });
+        var fixtures = new Harmony("Groundwork.Tests.PlantingProgression");
+        try
+        {
+            // Control only the external skill/config/localization inputs. The actual shared
+            // progression and hint paths run without initializing renderer/preview objects.
+            fixtures.Patch(progression.GetMethod("GetFarmingLevel", Static),
+                prefix: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(FarmingLevel)));
+            fixtures.Patch(mod.GetType("Groundwork.GroundworkToolsDomain", true).GetProperty("MassPlantingEnabled", Static).GetGetMethod(true),
+                prefix: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(MassPlantEnabled)));
+            fixtures.Patch(mod.GetType("Groundwork.GroundworkLocalization", true).GetMethod("Text", Static),
+                prefix: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(FallbackText)));
+            _massPlantEnabled = true;
+            if (pov == null)
+            {
+                float[] levels = { 0f, 19.99f, 20f, 39.99f, 40f, 59.99f, 60f, 79.99f, 80f, 99.99f, 100f };
+                int[] counts = { 0, 0, 5, 5, 10, 10, 15, 15, 20, 20, 25 };
+                for (int i = 0; i < levels.Length; i++)
+                {
+                    _farmingLevel = levels[i];
+                    assert(Max() == counts[i], "Without PoV, Farming " + levels[i] + " unlocks " + counts[i]);
+                }
+                assert(Hint(false) == null && Hint(true) == null, "Unlocked Farming has no lock hint");
+                _farmingLevel = 0;
+                assert(Hint(false).Contains("Farming skill 0/20") && Hint(true) == "Locked 0/20", "Both Farming lock hints retain level requirement");
+                _farmingLevel = 100;
+            }
+            else
+            {
+                MethodInfo has = pov.GetType("Valheiman.Api.Stats", true).GetMethod("Has", Static);
+                MethodInfo allowed = pov.GetType("PassiveTree.MassPlant", true).GetMethod("get_Allowed", Static);
+                fixtures.Patch(has, prefix: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(HasBroadSowing)));
+                // Simulate PoV's own ability/key gate being true. GW's installed postfix
+                // must still stop the extra bed, input and preview, including through its delegate.
+                fixtures.Patch(allowed, prefix: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(AllowPoVPlanting)));
+                _farmingLevel = 100;
+                _broadSowing = false;
+                assert(Max() == 0, "PoV without Broad Sowing stays locked even at Farming 100");
+                assert(Hint(false).Contains("Broad Sowing") && Hint(true).Contains("Broad Sowing") &&
+                       !Hint(false).Contains("Farming"), "Both PoV lock hints name Broad Sowing instead of Farming");
+                _farmingLevel = 0;
+                _broadSowing = true;
+                assert(Max() == 25 && _queriedStat == "MassPlant", "Public API Broad Sowing unlocks 25 at Farming zero without a held key");
+                assert(Hint(false) == null && Hint(true) == null, "Broad Sowing removes both lock hints");
+                assert(!(bool)allowed.Invoke(null, null), "PoV's real allowed getter is suppressed even when its own gate is true");
+                var cachedAllowed = (Func<bool>)compat.GetField("_massPlantAllowed", Static).GetValue(null);
+                assert(!cachedAllowed(), "Cached PoV getter also observes Groundwork takeover");
+                _broadSowing = false;
+                assert(Max() == 0 && Hint(false).Contains("Broad Sowing"), "Refund is read immediately without stale unlock cache");
+                _broadSowing = true;
+                assert(Max() == 25, "Reacquiring the ability restores the maximum");
+                compat.GetProperty("IsActive", Static).GetSetMethod(true).Invoke(null, new object[] { false });
+                try { assert((bool)allowed.Invoke(null, null), "Inactive adapter leaves PoV's own allowed result intact"); }
+                finally { compat.GetProperty("IsActive", Static).GetSetMethod(true).Invoke(null, new object[] { true }); }
+            }
+            _massPlantEnabled = false;
+            assert(Max() == 0, "Mass Planting Enabled off still disables Groundwork batches");
+        }
+        finally { fixtures.UnpatchSelf(); }
+    }
+
+    private static bool FarmingLevel(ref float __result) { __result = _farmingLevel; return false; }
+    private static bool MassPlantEnabled(ref bool __result) { __result = _massPlantEnabled; return false; }
+    private static bool FallbackText(string __1, ref string __result) { __result = __1; return false; }
+    private static bool HasBroadSowing(string __0, ref bool __result) { _queriedStat = __0; __result = _broadSowing; return false; }
+    private static bool AllowPoVPlanting(ref bool __result) { __result = true; return false; }
 
     private static bool Bonus(ref float __result) { __result = 1f; return false; }
     private static bool NoMeadow(ref float __result) { __result = 0f; return false; }
