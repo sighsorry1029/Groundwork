@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.19
+
+- With Path of Valheiman's supported public stats API, the active **Broad Sowing** ability now unlocks Groundwork mass planting at 5/10/15/20/25 plants instead of using Farming level. Selection starts at single planting, and losing the ability returns it to single planting. Without PoV, the existing Farming-level requirements are unchanged.
+- Kept Groundwork's Alt + mouse wheel controls (or the configured modifier), G grid toggle, planting previews, and piece-description/key hints. Grid planting remains available without Broad Sowing; locked hints now identify the required ability. PoV's own mass-plant input, preview and additional placements yield to Groundwork to avoid duplicate batches. Its width/length settings are not imported, and Groundwork's `Mass Planting Enabled` setting still disables multi-plant placement.
+- Left the remaining PoV harvesting, growth, regrowth, hive and progression compatibility unchanged. PoV releases without the public stats API retain the previous planting handoff.
+- Updated the release manifest helper to read UTF-8 explicitly, preserve literal file paths, and write UTF-8 without a BOM.
+
 ## 1.1.18
 
 - Added optional compatibility with Path of Valheiman. Compatibility is selected by callback signatures and IL patterns, not an exact version number. PoV 5.0.4 is the reviewed reference; other versions receive a diagnostic warning and the same structural checks. A failed check rolls back the adapter hooks instead of leaving a partial integration. Matching structure does not guarantee unchanged behavior in newer PoV versions.
