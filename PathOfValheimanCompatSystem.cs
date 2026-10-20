@@ -4,6 +4,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
+using BepInEx.Configuration;
 using BepInEx.Bootstrap;
 using HarmonyLib;
 using UnityEngine;
@@ -19,6 +20,7 @@ internal static class PathOfValheimanCompatSystem
     internal static Player? ReplantPlayer { get; private set; }
     private static Func<bool>? _massPlantAllowed;
     private static Func<string, bool>? _hasPovStat;
+    private static ConfigEntry<bool>? _wildSowingEnabled;
     private static Func<float>? _pickupRadius;
     private static AccessTools.FieldRef<bool>? _massPicking;
     private static Func<Beehive, int>? _hiveCapacity;
@@ -36,16 +38,11 @@ internal static class PathOfValheimanCompatSystem
     internal static bool TryInstall(Harmony harmony, Assembly assembly, System.Version version,
         Action<string> logInfo, Action<string> logWarning)
     {
-        // Version is diagnostic only. The callback signatures and IL below decide compatibility.
-        if (version != new System.Version(5, 0, 4))
-        {
-            logWarning($"Path of Valheiman {version} differs from the reviewed 5.0.4. Checking callback signatures and IL; matching structure does not establish in-game compatibility for this version.");
-        }
-
         try
         {
             Install(harmony, assembly);
-            logInfo($"Path of Valheiman {version} compatibility active after callback checks: shared planting/harvesting, growth and hive calculations coordinated; PoV progression and cultivation recipes preserved.");
+            logInfo($"Path of Valheiman {version} compatibility active after callback checks: shared planting/harvesting, growth and hive calculations coordinated; " +
+                    (UsesCultivation ? "Wild sowing controls cultivation.yml planting; recipe costs remain in YAML." : "cultivation remains with PlantEverything/PoV."));
             return true;
         }
         catch (Exception ex)
@@ -79,6 +76,11 @@ internal static class PathOfValheimanCompatSystem
 
         try
         {
+            FieldInfo? wildSowing = AccessTools.DeclaredField(assembly.GetType("PassiveTree.Plugin", true), "WildSowingEnabled");
+            if (wildSowing == null || !wildSowing.IsStatic || wildSowing.FieldType != typeof(ConfigEntry<bool>))
+                throw new MissingFieldException("PassiveTree.Plugin", "WildSowingEnabled");
+            _wildSowingEnabled = wildSowing.GetValue(null) as ConfigEntry<bool> ??
+                                 throw new InvalidOperationException("PoV Wild sowing configuration is not initialized.");
             MethodInfo massPlantAllowed = Find("MassPlant", "get_Allowed", typeof(bool));
             _massPlantAllowed = AccessTools.MethodDelegate<Func<bool>>(massPlantAllowed);
             Type gathering = assembly.GetType("PassiveTree.Gathering", true)!;
@@ -132,6 +134,8 @@ internal static class PathOfValheimanCompatSystem
                 _hasPovStat = (Func<string, bool>)Delegate.CreateDelegate(typeof(Func<string, bool>), hasStat);
                 Patch(massPlantAllowed, postfix: nameof(UseGroundworkPlanting));
             }
+            Patch(Find("WildSowing", "Sync", typeof(void)), prefix: nameof(BeginWildSowingSync),
+                postfix: nameof(EndWildSowingSync), transpiler: nameof(UseCultivationRecipes));
             IsActive = true;
         }
         catch (Exception installError)
@@ -155,6 +159,7 @@ internal static class PathOfValheimanCompatSystem
         ReplantPlayer = null;
         _massPlantAllowed = null;
         _hasPovStat = null;
+        _wildSowingEnabled = null;
         _pickupRadius = null;
         _massPicking = null;
         _hiveCapacity = null;
@@ -172,6 +177,36 @@ internal static class PathOfValheimanCompatSystem
 
     internal static bool UsesMassPlantingNodes => IsActive && _hasPovStat != null;
     internal static bool MassPlantingUnlocked => UsesMassPlantingNodes && _hasPovStat!("MassPlant");
+
+    // Empty/disabled YAML recipes still belong to Groundwork. They must not reopen PoV's
+    // alternative recipes. PlantEverything retains its existing independent provider policy.
+    internal static bool UsesCultivation => IsActive && _wildSowingEnabled != null && !PlantEverythingCompatSystem.IsActive;
+    internal static bool CultivationEnabled => !UsesCultivation || _wildSowingEnabled!.Value;
+
+    private static bool AllowPovWildSowing(bool enabled) => enabled && !UsesCultivation;
+
+    private static void BeginWildSowingSync(bool ___inTable, out bool __state) => __state = ___inTable;
+
+    private static void EndWildSowingSync(bool ___inTable, bool __state)
+    {
+        if (UsesCultivation && __state != ___inTable)
+            CultivationSystem.RefreshAvailablePieces();
+    }
+
+    private static IEnumerable<CodeInstruction> UseCultivationRecipes(IEnumerable<CodeInstruction> instructions)
+    {
+        var code = instructions.ToList();
+        int field = SingleMatch(code, c => c.opcode == OpCodes.Ldsfld && c.operand is FieldInfo f &&
+            f.DeclaringType?.FullName == "PassiveTree.Plugin" && f.Name == "WildSowingEnabled" &&
+            f.FieldType == typeof(ConfigEntry<bool>));
+        MethodInfo getter = AccessTools.PropertyGetter(typeof(ConfigEntry<bool>), nameof(ConfigEntry<bool>.Value));
+        int read = SingleMatch(code, c => c.Calls(getter));
+        if (read != field + 1)
+            throw new InvalidOperationException("PoV Wild sowing configuration read changed.");
+        // Filter only Sync's local decision; never write PoV's effective/server configuration.
+        code.Insert(read + 1, new CodeInstruction(OpCodes.Call, Helper(nameof(AllowPovWildSowing))));
+        return code;
+    }
 
     private static void UseGroundworkPlanting(ref bool __result)
     {

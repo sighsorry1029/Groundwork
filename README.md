@@ -180,18 +180,9 @@ Copy only the entries you want to change from the corresponding generated refere
 
 ### Path of Valheiman
 
-Groundwork automatically enables optional compatibility with **Path of Valheiman** when the required callback signatures and IL patterns match. Version numbers do not block installation. The reviewed reference is PoV 5.0.4; other versions produce a diagnostic warning and undergo the same structural checks. A mismatch cancels the adapter and removes hooks installed during that attempt. Matching structure is not a guarantee that a newer version's behavior is unchanged. Install the same mod versions on the server and clients.
+> With Path of Valheiman, **Wild sowing** controls new planting from Groundwork's `cultivation.yml`. Recipe costs stay in YAML; PoV seeds are optional ingredients you add yourself. **Broad Sowing** keeps Groundwork's planting controls and key hints.
 
-- PoV's skill progression policy remains authoritative. Its default `Disable vanilla progression = true` and `Frozen skill level = 0` can reduce Groundwork's other Farming-based bonuses; Groundwork does not substitute saved skill levels or tree levels.
-- With PoV's public stats API, Groundwork handles mass/grid planting, input, previews and hints. Its **Broad Sowing** (`MassPlant`) ability unlocks up to 25 plants regardless of Farming level; refunding it returns selection to single planting. G grid planting remains available without the ability. PoV's separate mass-plant input, preview and extra placements are suppressed, including while its own key is held. `Mass Planting Enabled` still controls multi-plant placement. Without that API, the previous PoV planting handoff is retained. No PoV width/length settings are imported.
-- PoV's area-pickup ability handles automatic range harvesting when available. Additional calls made by Groundwork's scythe/range harvest or PoV's airborne harvest do not start another area search.
-- PoV's scythe radius and pickaxe terrain-prefab selection run before Groundwork's corresponding changes. Node bonuses remain PoV's calculations.
-- Explicit `plants.yml` grow times are applied before PoV's growth bonus and Groundwork's growth effects. PoV wild-regrowth bonuses use a separate per-cycle rate, combined with Groundwork's required time, instead of backdating the harvest timestamp. PoV's existing owner eligibility is retained; this does not add remote-owner bonus delivery. Previously backdated timestamps are not migrated.
-- Hive node bonuses and Groundwork effects share production-time and capacity calculations. Winter Hive's biome permission is respected. Builder credit, extra rewards, Hive Chain, Swarm Split and other PoV node behavior remain enabled. Stored honey is preserved when effective capacity decreases.
-- Quick Replant supplies its actual player to Groundwork's planting-skill snapshot. Bed Watch uses Groundwork's remaining-time calculation; only its duplicate timer is suppressed when Groundwork displays one. PoV's other credit/planter text is retained.
-- `cultivation.yml` stays active (unless PlantEverything is also installed). PoV's Wild Sowing is a separate recipe/lifecycle choice. To avoid two planting routes, choose the desired provider in their existing settings. Explicit administrator biome restrictions take precedence over PoV's planting unlock for matching Plant entries; the unlock is not extended to Groundwork's Pickable recipes.
-
-The adapter does not change PoV's reward/RPC acceptance policy. Dedicated-server owner changes, simultaneous harvests, node refunds, and actual terrain/planting behavior still require in-game validation. No PoV DLL is included in Groundwork's package.
+See the [Path of Valheiman compatibility guide](https://github.com/sighsorry1029/Groundwork/blob/main/docs/PathOfValheiman.md) for the seed list, YAML examples, other compatibility behavior and PlantEverything precedence. Install the same mod versions on the server and clients.
 
 ### PlantEverything
 

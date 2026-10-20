@@ -24,7 +24,8 @@ $references = @('mscorlib.dll','System.dll','System.Core.dll') | ForEach-Object 
 if ($LASTEXITCODE) { throw 'Mono host compilation failed.' }
 $gameReferences = @('assembly_valheim.dll','assembly_utils.dll','UnityEngine.CoreModule.dll','netstandard.dll') | ForEach-Object { '/reference:' + (Join-Path $managed $_) }
 $harmonyReference = '/reference:' + (Join-Path $core '0Harmony.dll')
-& dotnet $compiler /nologo /noconfig /nostdlib+ /langversion:latest @references @gameReferences $harmonyReference /target:library "/out:$probe" "$PSScriptRoot/CompatibilityProbe.cs" "$PSScriptRoot/HarvestSkillProbe.cs" "$PSScriptRoot/PathOfValheimanProbe.cs"
+$bepInExReference = '/reference:' + (Join-Path $core 'BepInEx.dll')
+& dotnet $compiler /nologo /noconfig /nostdlib+ /langversion:latest @references @gameReferences $harmonyReference $bepInExReference /target:library "/out:$probe" "$PSScriptRoot/CompatibilityProbe.cs" "$PSScriptRoot/HarvestSkillProbe.cs" "$PSScriptRoot/PathOfValheimanProbe.cs"
 if ($LASTEXITCODE) { throw 'Mono probe compilation failed.' }
 $isolatedMod = Join-Path $directory 'Groundwork.dll'
 Copy-Item -LiteralPath $ModDll -Destination $isolatedMod

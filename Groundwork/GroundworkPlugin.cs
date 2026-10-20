@@ -24,7 +24,7 @@ namespace Groundwork;
 public class GroundworkPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Groundwork";
-    internal const string ModVersion = "1.1.19";
+    internal const string ModVersion = "1.1.20";
     internal const string Author = "sighsorry";
     private const string ModGUID = $"{Author}.{ModName}";
     private const string JewelcraftingGuid = "org.bepinex.plugins.jewelcrafting";
@@ -113,6 +113,11 @@ public class GroundworkPlugin : BaseUnityPlugin
         {
             Config.SaveOnConfigSet = saveOnSet;
         }
+    }
+
+    private void Update()
+    {
+        CultivationSystem.RefreshPlantingAvailability();
     }
 
     public void OnDestroy()

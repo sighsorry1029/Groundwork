@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.20
+
+- With the Path of Valheiman compatibility adapter active, PoV's **Wild sowing** setting now controls new planting from Groundwork's `cultivation.yml`. When enabled, YAML defines the recipes, material costs, biome restrictions and spacing. When disabled, those additional recipes are hidden and new placement is blocked; existing plantings retain their growth and removal behavior. Ordinary crops and saplings are unaffected.
+- Suppressed PoV's separate `PT_wild_*` planting route while Groundwork handles cultivation, including stale selections, so its one-item fallback cannot bypass YAML costs. Existing PoV prefab registration is preserved. PlantEverything's existing handoff still takes precedence and keeps Groundwork's cultivation inactive.
+- Read PoV's effective Wild sowing setting without changing its configuration, with live recipe-menu updates. In PoV 5.1.0 this setting defaults to true and follows the host/server configuration. This is separate from the **Cuttings** node, which supplies seed drops.
+- Kept existing YAML files and recipe costs unchanged. PoV seeds are **not added automatically**: add the desired seed or spore prefab explicitly to `resources`. Added a dedicated [Path of Valheiman compatibility guide](https://github.com/sighsorry1029/Groundwork/blob/main/docs/PathOfValheiman.md) with all 12 PoV 5.1.0 seed mappings and YAML examples. Lingonberry and Fiddlehead fern have no matching PoV seed in that version, so their costs remain administrator-defined.
+- Removed warnings caused only by a different PoV version number. Compatibility still requires the callback signatures and IL patterns to match; actual installation failures retain warnings and roll back the attempted hooks. Matching structure is not a guarantee of unchanged behavior in future versions.
+- Preserved the existing Broad Sowing mass/grid controls, key hints, harvesting, growth and hive coordination. Use the same mod versions on the server and clients.
+
 ## 1.1.19
 
 - With Path of Valheiman's supported public stats API, the active **Broad Sowing** ability now unlocks Groundwork mass planting at 5/10/15/20/25 plants instead of using Farming level. Selection starts at single planting, and losing the ability returns it to single planting. Without PoV, the existing Farming-level requirements are unchanged.

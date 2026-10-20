@@ -1,10 +1,12 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.Serialization;
+using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace Groundwork.Tests;
@@ -24,11 +26,12 @@ internal static class PathOfValheimanProbe
             (int)a.ConstructorArguments[1].Value == 2), "PoV is an ordered soft dependency");
         assert(!(bool)compat.GetProperty("OwnsRangeHarvest", Static).GetValue(null), "PoV absent: no range takeover");
         assert(!(bool)compat.GetProperty("UsesMassPlantingNodes", Static).GetValue(null), "PoV absent: Farming planting progression");
+        assert((bool)compat.GetProperty("CultivationEnabled", Static).GetValue(null), "PoV absent: YAML planting stays enabled");
         VerifyPlantingProgression(mod, null, assert);
         foreach (float invalid in new[] { 0f, -1f, float.NaN, float.PositiveInfinity })
             assert((float)Call("ValidRate", invalid) == 1f, "Reject invalid PoV rate " + invalid);
         assert((float)Call("ValidRate", 2f) == 2f, "Preserve valid PoV rate");
-        foreach (string transpiler in new[] { "KeepHiveTimeUnmodified", "KeepHiveCapacityUnmodified", "UseEffectiveHiveCapacity", "StoreRespawnRateInsteadOfBackdating", "UseRemainingGrowthTime" })
+        foreach (string transpiler in new[] { "KeepHiveTimeUnmodified", "KeepHiveCapacityUnmodified", "UseEffectiveHiveCapacity", "StoreRespawnRateInsteadOfBackdating", "UseRemainingGrowthTime", "UseCultivationRecipes" })
         {
             bool rejected = false;
             try { Call(transpiler, new List<CodeInstruction>()); }
@@ -50,6 +53,14 @@ internal static class PathOfValheimanProbe
         }
 
         Assembly pov = Assembly.LoadFrom(path);
+        // No plugin Awake is run. Supply only its already-bound effective configuration.
+        AccessTools.Method(typeof(BepInEx.Paths), "SetExecutablePath").Invoke(null,
+            new object[] { Path.Combine(Path.GetDirectoryName(path), "probe.exe"), null, null, null });
+        var config = new ConfigFile(Path.Combine(Path.GetDirectoryName(path), "pov-probe.cfg"), false) { SaveOnConfigSet = false };
+        ConfigEntry<bool> wildSowing = config.Bind("1. Balance", "Wild sowing", true);
+        FieldInfo wildSowingField = pov.GetType("PassiveTree.Plugin", true).GetField("WildSowingEnabled", Static);
+        object originalWildSowing = wildSowingField.GetValue(null);
+        wildSowingField.SetValue(null, wildSowing);
         var harmony = new Harmony("Groundwork.Tests.PathOfValheiman");
         var nativeStubs = new Harmony("Groundwork.Tests.PoVNativeStubs");
         var povPatches = new Harmony("treextr.pathofvalheiman");
@@ -71,13 +82,14 @@ internal static class PathOfValheimanProbe
                 (Action<string>)messages.Add, (Action<string>)warnings.Add),
                 "Matching callbacks install through startup path with different version metadata");
             assert(Active(), "Actual PoV DLL: complete adapter installs");
-            assert(warnings.Count == 1 && warnings[0].Contains("5.0.5") && messages.Any(m => m.Contains("compatibility active")),
-                "Unreviewed version is diagnostic, not a rejection");
+            assert(warnings.Count == 0 && messages.Any(m => m.Contains("compatibility active")),
+                "Matching callbacks do not warn just because version metadata differs");
             bool hasStatsApi = pov.GetType("Valheiman.Api.Stats") != null;
-            assert(harmony.GetPatchedMethods().Count() == (hasStatsApi ? 13 : 12), "PoV coordination and optional planting gate install atomically");
+            assert(harmony.GetPatchedMethods().Count() == (hasStatsApi ? 14 : 13), "PoV coordination, cultivation and optional planting gate install atomically");
             assert((bool)compat.GetProperty("UsesMassPlantingNodes", Static).GetValue(null) == hasStatsApi,
                 "Planting takeover requires the public stats API and successful hook installation");
             if (hasStatsApi) VerifyPlantingProgression(mod, pov, assert);
+            VerifyCultivation(mod, pov, wildSowing, assert);
 
             // This is the supplied PoV Borrowed struct and real patched callback, not a replica.
             var hive = (Beehive)FormatterServices.GetUninitializedObject(typeof(Beehive));
@@ -179,7 +191,8 @@ internal static class PathOfValheimanProbe
             Call("Shutdown");
             assert(!Active() && (float)Call("RespawnRate", zdo) == 1f, "Unload ignores retained PoV cycle data");
             assert(!(bool)compat.GetProperty("UsesMassPlantingNodes", Static).GetValue(null) &&
-                   compat.GetField("_hasPovStat", Static).GetValue(null) == null, "Unload clears planting takeover and API delegate");
+                   compat.GetField("_hasPovStat", Static).GetValue(null) == null &&
+                   compat.GetField("_wildSowingEnabled", Static).GetValue(null) == null, "Unload clears planting takeover and configuration references");
             assert(!harmony.GetPatchedMethods().Any(), "PoV callback hooks are removed on unload");
 
             bool rejectedOperand = false;
@@ -202,6 +215,21 @@ internal static class PathOfValheimanProbe
             }
             finally { changedCallback.UnpatchSelf(); }
 
+            // Reject a changed WildSowing getter before leaving any of the earlier hooks installed.
+            var changedSowing = new Harmony("Groundwork.Tests.PoVChangedSowing");
+            try
+            {
+                MethodInfo sync = Pov("WildSowing", "Sync");
+                changedSowing.Patch(sync, transpiler: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(RemoveWildSowingRead)) { priority = Priority.First });
+                warnings.Clear();
+                assert(!(bool)Call("TryInstall", harmony, pov, new System.Version(99, 0, 0),
+                    (Action<string>)messages.Add, (Action<string>)warnings.Add), "Changed Wild sowing read rejects adapter");
+                assert(!Active() && !harmony.GetPatchedMethods().Any() &&
+                       compat.GetField("_wildSowingEnabled", Static).GetValue(null) == null, "Cultivation failure rolls back all hooks and captured config");
+                assert(warnings.Count == 1 && warnings[0].Contains("WildSowing.Sync"), "Actual cultivation mismatch warns with the failing callback");
+            }
+            finally { changedSowing.UnpatchSelf(); }
+
             warnings.Clear();
             assert((bool)Call("TryInstall", harmony, pov, new System.Version(5, 0, 4),
                 (Action<string>)messages.Add, (Action<string>)warnings.Add) && warnings.Count == 0,
@@ -214,6 +242,146 @@ internal static class PathOfValheimanProbe
             harmony.UnpatchSelf();
             nativeStubs.UnpatchSelf();
             Call("Shutdown");
+            wildSowingField.SetValue(null, originalWildSowing);
+        }
+    }
+
+    private static PieceTable _wildTable;
+    private static Piece _povPiece;
+    private static int _menuRefreshes;
+
+    private static T ManagedUnityObject<T>() where T : UnityEngine.Object
+    {
+        var value = (T)FormatterServices.GetUninitializedObject(typeof(T));
+        AccessTools.Field(typeof(UnityEngine.Object), "m_CachedPtr").SetValue(value, new IntPtr(1));
+        return value;
+    }
+
+    private static void VerifyCultivation(Assembly mod, Assembly pov, ConfigEntry<bool> setting, Action<bool, string> assert)
+    {
+        Type compat = mod.GetType("Groundwork.PathOfValheimanCompatSystem", true);
+        Type cultivation = mod.GetType("Groundwork.CultivationSystem", true);
+        Type pe = mod.GetType("Groundwork.PlantEverythingCompatSystem", true);
+        Type sowing = pov.GetType("PassiveTree.WildSowing", true);
+        object Call(string name, params object[] args) => cultivation.GetMethod(name, Static).Invoke(null, args);
+        bool Enabled() => (bool)compat.GetProperty("CultivationEnabled", Static).GetValue(null);
+        var fixtures = new Harmony("Groundwork.Tests.CultivationNativeFixtures");
+        var registrations = (IDictionary)cultivation.GetField("Registrations", Static).GetValue(null);
+        var rules = (IDictionary)cultivation.GetField("Rules", Static).GetValue(null);
+        var saplings = (IList)sowing.GetField("saplings", Static).GetValue(null);
+        FieldInfo inTable = sowing.GetField("inTable", Static);
+        MethodInfo sync = sowing.GetMethod("Sync", Static);
+        var table = ManagedUnityObject<PieceTable>();
+        table.m_pieces = new List<UnityEngine.GameObject>();
+        table.m_canRemovePieces = true;
+        var prefab = ManagedUnityObject<UnityEngine.GameObject>();
+        var piece = ManagedUnityObject<Piece>();
+        piece.m_resources = new[] { new Piece.Requirement { m_amount = 30 } };
+        piece.m_description = "$groundwork_cultivation_description";
+        _povPiece = ManagedUnityObject<Piece>();
+        _wildTable = ManagedUnityObject<PieceTable>();
+        _wildTable.m_pieces = new List<UnityEngine.GameObject> { prefab };
+        saplings.Add(prefab);
+        inTable.SetValue(null, true);
+        _menuRefreshes = 0;
+        try
+        {
+            fixtures.Patch(sowing.GetMethod("Table", Static), prefix: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(WildTable)));
+            fixtures.Patch(cultivation.GetMethod("RefreshAvailablePieces", Static), prefix: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(CountMenuRefresh)));
+            fixtures.Patch(cultivation.GetMethod("PrefabName", Static), prefix: new HarmonyMethod(typeof(PathOfValheimanProbe), nameof(CultivationPrefabName)));
+            cultivation.GetField("_cultivatorTable", Static).SetValue(null, table);
+            Type entry = cultivation.GetNestedType("Entry", BindingFlags.Public);
+            object rule = Activator.CreateInstance(entry);
+            entry.GetProperty("Prefab").SetValue(rule, "RaspberryBush");
+            entry.GetProperty("Plantable").SetValue(rule, true);
+            entry.GetProperty("Resources").SetValue(rule, new[] { "Raspberry, 30", "PT_SeedRaspberry, 2" });
+            rules.Add("RaspberryBush", rule);
+            Type registration = cultivation.GetNestedType("Registration", BindingFlags.NonPublic);
+            registrations.Add("RaspberryBush", Activator.CreateInstance(registration, BindingFlags.Instance | BindingFlags.NonPublic,
+                null, new object[] { "RaspberryBush", prefab, piece, false, true }, null));
+            table.m_pieces.Add(prefab);
+
+            setting.Value = true;
+            Call("RefreshPlantingAvailability");
+            assert(Enabled() && piece.m_enabled && table.m_pieces.Count == 1, "Wild sowing on enables the YAML recipe");
+            assert(!(bool)Call("BlocksPlacement", piece), "Enabled YAML placement is allowed");
+            assert((bool)Call("BlocksPlacement", _povPiece), "Stale PoV sapling selection cannot bypass YAML");
+            sync.Invoke(null, null);
+            assert(_wildTable.m_pieces.Count == 0 && !(bool)inTable.GetValue(null) && saplings.Count == 1,
+                "Actual PoV Sync removes its menu but preserves registered saplings");
+            assert(setting.Value, "PoV effective setting is never overwritten");
+            int refreshed = _menuRefreshes;
+            Call("RefreshPlantingAvailability");
+            assert(_menuRefreshes == refreshed, "Unchanged setting does not rebuild UI");
+
+            setting.Value = false;
+            assert(!Enabled() && (bool)Call("BlocksPlacement", piece), "Placement closes immediately before the next UI refresh");
+            Call("RefreshPlantingAvailability");
+            assert(!piece.m_enabled && table.m_pieces.Count == 0 && table.m_canRemovePieces &&
+                   registrations.Count == 1 && rules.Count == 1, "Turning off removes only the menu; registration, removal and saved-object rule remain");
+            object[] planting = { piece, null };
+            assert((bool)Call("TryGetPlanting", planting), "Disabled new planting still recognizes placement initialization/lifecycle");
+            // Simulate recipe reapplication: it must not reopen a disabled menu.
+            piece.m_enabled = true;
+            table.m_pieces.Add(prefab);
+            cultivation.GetField("_appliedPlantingEnabled", Static).SetValue(null, null);
+            Call("RefreshPlantingAvailability");
+            assert(!piece.m_enabled && table.m_pieces.Count == 0, "YAML reapplication honors the off switch");
+
+            setting.Value = true;
+            Call("RefreshPlantingAvailability");
+            Call("RefreshPlantingAvailability");
+            assert(table.m_pieces.Count == 1 && piece.m_resources[0].m_amount == 30 &&
+                   ((string[])entry.GetProperty("Resources").GetValue(rule)).SequenceEqual(new[] { "Raspberry, 30", "PT_SeedRaspberry, 2" }),
+                "Re-enable restores one menu entry without changing or injecting recipe costs");
+            entry.GetProperty("Plantable").SetValue(rule, false);
+            assert((bool)Call("BlocksPlacement", piece), "Disabled YAML rule blocks a stale selection");
+            rules.Clear();
+            assert((bool)Call("BlocksPlacement", piece) && (bool)Call("BlocksPlacement", _povPiece),
+                "Empty YAML does not reopen either planting route");
+
+            pe.GetProperty("IsActive", Static).GetSetMethod(true).Invoke(null, new object[] { true });
+            sync.Invoke(null, null);
+            assert(_wildTable.m_pieces.Count == 1 && !(bool)Call("BlocksPlacement", _povPiece),
+                "PlantEverything mode keeps PoV's own recipe provider");
+            setting.Value = false;
+            sync.Invoke(null, null);
+            assert(_wildTable.m_pieces.Count == 0 && Enabled(), "PE mode leaves GW dormant and respects PoV off");
+        }
+        finally
+        {
+            fixtures.UnpatchSelf();
+            pe.GetProperty("IsActive", Static).GetSetMethod(true).Invoke(null, new object[] { false });
+            setting.Value = true;
+            registrations.Clear();
+            rules.Clear();
+            saplings.Clear();
+            inTable.SetValue(null, false);
+            cultivation.GetField("_cultivatorTable", Static).SetValue(null, null);
+            cultivation.GetField("_appliedPlantingEnabled", Static).SetValue(null, null);
+            _wildTable = null;
+            _povPiece = null;
+        }
+    }
+
+    private static bool WildTable(ref PieceTable __result) { __result = _wildTable; return false; }
+    private static bool CountMenuRefresh() { _menuRefreshes++; return false; }
+    private static bool CultivationPrefabName(UnityEngine.Component __0, ref string __result)
+    {
+        __result = ReferenceEquals(__0, _povPiece) ? "PT_wild_RaspberryBush" : "RaspberryBush";
+        return false;
+    }
+    private static IEnumerable<CodeInstruction> RemoveWildSowingRead(IEnumerable<CodeInstruction> instructions)
+    {
+        foreach (CodeInstruction instruction in instructions)
+        {
+            if (!instruction.Calls(AccessTools.PropertyGetter(typeof(ConfigEntry<bool>), "Value")))
+            {
+                yield return instruction;
+                continue;
+            }
+            yield return new CodeInstruction(OpCodes.Pop).MoveLabelsFrom(instruction).MoveBlocksFrom(instruction);
+            yield return new CodeInstruction(OpCodes.Ldc_I4_0);
         }
     }
 

@@ -223,6 +223,11 @@ internal static class MassPlantingSystem
     // Placement interception and preview.
     internal static bool TryInterceptPlace(Player player, Piece piece, ref bool result)
     {
+        if (CultivationSystem.BlocksPlacement(piece))
+        {
+            result = false;
+            return false;
+        }
         if (_placingBatch || PathOfValheimanCompatSystem.OwnsPlanting(player, piece) ||
             !TryGetPlant(piece, out Plant? plantCandidate) ||
             UpdatePlacementGhostMethod == null)
@@ -283,7 +288,7 @@ internal static class MassPlantingSystem
             Physics.SyncTransforms();
             for (int i = 0; i < PlantSlots.Count; i++)
             {
-                if (i >= placeLimit)
+                if (i >= placeLimit || CultivationSystem.BlocksPlacement(piece))
                 {
                     break;
                 }

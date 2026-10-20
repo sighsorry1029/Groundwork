@@ -7,6 +7,7 @@ namespace Groundwork;
 [HarmonyPatch(typeof(ObjectDB), "Awake")]
 internal static class ObjectDbAwakeGroundworkPatch
 {
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     private static void Postfix(ObjectDB __instance)
     {
         GroundworkPlugin.ApplyToObjectDb(__instance);
@@ -16,6 +17,7 @@ internal static class ObjectDbAwakeGroundworkPatch
 [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.CopyOtherDB))]
 internal static class ObjectDbCopyOtherDbGroundworkPatch
 {
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     private static void Postfix(ObjectDB __instance)
     {
         GroundworkPlugin.ApplyToObjectDb(__instance);
@@ -118,6 +120,7 @@ internal static class PlayerStartGroundworkPatch
 [HarmonyPatch(typeof(ZNetScene), "Awake")]
 internal static class ZNetSceneAwakeGroundworkPatch
 {
+    [HarmonyAfter(PathOfValheimanCompatSystem.PluginGuid)]
     private static void Postfix(ZNetScene __instance)
     {
         PickedVisualSystem.InvalidateCache();

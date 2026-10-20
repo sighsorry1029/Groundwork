@@ -29,6 +29,7 @@ internal static class CultivationSystem
     private static bool _naturalRemovalConfigApplied;
     private static bool _appliedNaturalRemovalEnabled;
     private static string _appliedNaturalRemovalPrefabs = "";
+    private static bool? _appliedPlantingEnabled;
 
     public sealed class Entry
     {
@@ -158,6 +159,53 @@ internal static class CultivationSystem
 
         spacing = rule.Spacing;
         return true;
+    }
+
+    internal static bool BlocksPlacement(Piece? piece)
+    {
+        if (!PathOfValheimanCompatSystem.UsesCultivation || piece == null)
+            return false;
+        string prefab = PrefabName(piece);
+        // Also reject a stale PoV selection after its menu entry has been removed.
+        if (prefab.StartsWith("PT_wild_", StringComparison.Ordinal))
+            return true;
+        return (piece.m_description == PieceDescription || Registrations.ContainsKey(prefab)) &&
+               (!PathOfValheimanCompatSystem.CultivationEnabled || GetPlantingRule(piece) == null);
+    }
+
+    // Called on Unity's main thread, including on dedicated servers. The unchanged path
+    // reads one cached config entry; only a transition touches prefabs or refreshes the UI.
+    internal static void RefreshPlantingAvailability()
+    {
+        if (_cultivatorTable == null)
+            return;
+        bool enabled = PathOfValheimanCompatSystem.CultivationEnabled;
+        if (_appliedPlantingEnabled == enabled)
+            return;
+        foreach (Registration registration in Registrations.Values)
+        {
+            if (!registration.AddedToPieceTable || registration.Piece == null)
+                continue;
+            registration.Piece.m_enabled = enabled;
+            bool inTable = _cultivatorTable.m_pieces.Contains(registration.Prefab);
+            if (enabled && !inTable)
+                _cultivatorTable.m_pieces.Add(registration.Prefab);
+            else if (!enabled && inTable)
+                _cultivatorTable.m_pieces.Remove(registration.Prefab);
+        }
+        _appliedPlantingEnabled = enabled;
+        RefreshAvailablePieces();
+    }
+
+    internal static void RefreshAvailablePieces()
+    {
+        Player? player = Player.m_localPlayer;
+        if (player != null && Game.instance != null)
+        {
+            UpdateKnownRecipes?.Invoke(player, null);
+            // Vanilla refreshes every category and rebuilds the placement ghost.
+            UpdateAvailablePieces?.Invoke(player, null);
+        }
     }
 
     private static Entry? GetPlantingRule(Piece piece)
@@ -379,12 +427,8 @@ internal static class CultivationSystem
         _appliedNaturalRemovalEnabled = GroundworkToolsDomain.NaturalPickableRemovalEnabled;
         _appliedNaturalRemovalPrefabs = GroundworkToolsDomain.NaturalPickableRemovalPrefabs;
         _naturalRemovalConfigApplied = true;
-        Player? player = Player.m_localPlayer;
-        if (player != null && Game.instance != null)
-        {
-            UpdateKnownRecipes?.Invoke(player, null);
-            UpdateAvailablePieces?.Invoke(player, null);
-        }
+        _appliedPlantingEnabled = null;
+        RefreshPlantingAvailability();
     }
 
     private static bool ApplyPlantingRule(Entry rule, PieceTable table)
@@ -625,6 +669,7 @@ internal static class CultivationSystem
         }
 
         _cultivatorTable = null;
+        _appliedPlantingEnabled = null;
     }
 
     private static void RestoreRegistration(Registration registration, bool preservePlanted)
